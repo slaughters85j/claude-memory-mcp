@@ -1,0 +1,63 @@
+{
+  "name": "claude-memory-mcp",
+  "version": "1.0.0",
+  "author": {
+    "name": "Alex Komyagin",
+    "email": "alex@adiom.io"
+  },
+  "description": "Claude Memory MCP server - LanceDB-backed persistent memory for Claude",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "claude-memory-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && shx chmod +x dist/*.js",
+    "prepare": "npm run build",
+    "watch": "tsc --watch",
+    "seed": "tsx src/seed.ts"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "lancedb",
+    "anthropic",
+    "ai",
+    "database"
+  ],
+  "dependencies": {
+    "@lancedb/lancedb": "^0.15.0",
+    "@langchain/community": "^0.3.24",
+    "@langchain/ollama": "^0.1.4",
+    "@modelcontextprotocol/sdk": "1.1.1",
+    "@xenova/transformers": "^2.17.2",
+    "minimist": "^1.2.8",
+    "pdf-parse": "^1.1.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "@types/uuid": "^9.0.8",
+    "shx": "^0.3.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },  
+  "overrides": {
+    "@langchain/community": {
+      "@lancedb/lancedb": "^0.15.0"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adiom-data/lance-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/adiom-data/lance-mcp/issues"
+  }
+}
