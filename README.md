@@ -111,14 +111,53 @@ These require seeding documents first (see [RAG Setup](#rag-setup-optional)):
 
 ### Embedding Providers
 
-The server uses local ONNX embeddings by default. Configure via environment variables:
+**Default — Local ONNX embeddings (all-MiniLM-L6-v2, 384 dims):**
 
 ```json
 {
   "mcpServers": {
     "claude-memory": {
       "command": "node",
-      "args": ["..."],
+      "args": [
+        "/path/to/claude-memory-mcp/dist/index.js",
+        "/path/to/memory-db"
+      ]
+    }
+  }
+}
+```
+
+**OpenAI embeddings (text-embedding-3-small):**
+
+```json
+{
+  "mcpServers": {
+    "claude-memory": {
+      "command": "node",
+      "args": [
+        "/path/to/claude-memory-mcp/dist/index.js",
+        "/path/to/memory-db"
+      ],
+      "env": {
+        "PREFER_OPENAI_EMBEDDINGS": "true",
+        "OPENAI_API_KEY": "sk-your-key-here"
+      }
+    }
+  }
+}
+```
+
+**Disabled — CRUD only, text-based search fallback:**
+
+```json
+{
+  "mcpServers": {
+    "claude-memory": {
+      "command": "node",
+      "args": [
+        "/path/to/claude-memory-mcp/dist/index.js",
+        "/path/to/memory-db"
+      ],
       "env": {
         "DISABLE_EMBEDDINGS": "true"
       }
@@ -126,12 +165,6 @@ The server uses local ONNX embeddings by default. Configure via environment vari
   }
 }
 ```
-
-| Variable | Effect |
-|----------|--------|
-| *(default)* | Local ONNX embeddings (all-MiniLM-L6-v2, 384 dims) |
-| `PREFER_OPENAI_EMBEDDINGS=true` + `OPENAI_API_KEY=sk-...` | Use OpenAI text-embedding-3-small |
-| `DISABLE_EMBEDDINGS=true` | No embeddings, CRUD only, text-based search fallback |
 
 ## Recommended System Prompt
 
