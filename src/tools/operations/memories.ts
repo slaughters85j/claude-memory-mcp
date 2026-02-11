@@ -140,11 +140,14 @@ export class AddMemoryTool extends BaseTool<AddMemoryParams> {
         await touchTopicLastReferenced(topicId);
       }
 
+      // Strip vector from output (too large, not useful for Claude)
+      const { vector: _v, ...memoryWithoutVector } = memory;
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(memory, null, 2),
+            text: JSON.stringify(memoryWithoutVector, null, 2),
           },
         ],
         isError: false,
@@ -248,16 +251,31 @@ export class UpdateMemoryTool extends BaseTool<UpdateMemoryParams> {
 
       const memory = await updateMemory(params.memory_id, updates);
 
+      if (!memory) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to update memory ${params.memory_id}. The update operation returned no result.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
       // Touch the topic's last_referenced_at
-      if (memory?.topic_id) {
+      if (memory.topic_id) {
         await touchTopicLastReferenced(memory.topic_id);
       }
+
+      // Strip vector from output (too large, not useful for Claude)
+      const { vector: _v, ...memoryWithoutVector } = memory;
 
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(memory, null, 2),
+            text: JSON.stringify(memoryWithoutVector, null, 2),
           },
         ],
         isError: false,
@@ -512,12 +530,15 @@ export class GetMemoryTool extends BaseTool<GetMemoryParams> {
         };
       }
 
+      // Strip vector from output (too large, not useful for Claude)
+      const { vector: _v, ...memoryWithoutVector } = memory;
+
       const response: {
-        memory: Memory;
+        memory: Omit<Memory, 'vector'>;
         linked_todos?: any[];
-        supersedes?: Memory | null;
-        superseded_by?: Memory | null;
-      } = { memory };
+        supersedes?: Omit<Memory, 'vector'> | null;
+        superseded_by?: Omit<Memory, 'vector'> | null;
+      } = { memory: memoryWithoutVector };
 
       // Get linked todos
       if (params.include_linked_todos ?? true) {
@@ -531,11 +552,19 @@ export class GetMemoryTool extends BaseTool<GetMemoryParams> {
       if (params.include_supersession_chain) {
         // What this memory supersedes
         if (memory.supersedes_id) {
-          response.supersedes = await getMemoryById(memory.supersedes_id);
+          const supersedes = await getMemoryById(memory.supersedes_id);
+          if (supersedes) {
+            const { vector: _v2, ...supersedesWithoutVector } = supersedes;
+            response.supersedes = supersedesWithoutVector;
+          }
         }
 
         // What supersedes this memory
-        response.superseded_by = await getMemoriesBySupersedes(params.memory_id);
+        const supersededBy = await getMemoriesBySupersedes(params.memory_id);
+        if (supersededBy) {
+          const { vector: _v3, ...supersededByWithoutVector } = supersededBy;
+          response.superseded_by = supersededByWithoutVector;
+        }
       }
 
       // Touch topic last_referenced_at

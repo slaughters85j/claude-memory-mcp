@@ -126,11 +126,14 @@ export class AddTodoTool extends BaseTool<AddTodoParams> {
         vector,
       });
 
+      // Strip vector from output (too large, not useful for Claude)
+      const { vector: _v, ...todoWithoutVector } = todo;
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(todo, null, 2),
+            text: JSON.stringify(todoWithoutVector, null, 2),
           },
         ],
         isError: false,
@@ -247,11 +250,26 @@ export class UpdateTodoTool extends BaseTool<UpdateTodoParams> {
 
       const todo = await updateTodo(params.todo_id, updates);
 
+      if (!todo) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to update todo ${params.todo_id}. The update operation returned no result.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Strip vector from output (too large, not useful for Claude)
+      const { vector: _v, ...todoWithoutVector } = todo;
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(todo, null, 2),
+            text: JSON.stringify(todoWithoutVector, null, 2),
           },
         ],
         isError: false,

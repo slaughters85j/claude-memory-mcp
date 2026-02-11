@@ -103,11 +103,13 @@ export class AddMemoryTool extends BaseTool {
             if (topicId) {
                 await touchTopicLastReferenced(topicId);
             }
+            // Strip vector from output (too large, not useful for Claude)
+            const { vector: _v, ...memoryWithoutVector } = memory;
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(memory, null, 2),
+                        text: JSON.stringify(memoryWithoutVector, null, 2),
                     },
                 ],
                 isError: false,
@@ -199,15 +201,28 @@ export class UpdateMemoryTool extends BaseTool {
                 updates.vector = await safeEmbed(textForEmbedding);
             }
             const memory = await updateMemory(params.memory_id, updates);
+            if (!memory) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: `Failed to update memory ${params.memory_id}. The update operation returned no result.`,
+                        },
+                    ],
+                    isError: true,
+                };
+            }
             // Touch the topic's last_referenced_at
-            if (memory?.topic_id) {
+            if (memory.topic_id) {
                 await touchTopicLastReferenced(memory.topic_id);
             }
+            // Strip vector from output (too large, not useful for Claude)
+            const { vector: _v, ...memoryWithoutVector } = memory;
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(memory, null, 2),
+                        text: JSON.stringify(memoryWithoutVector, null, 2),
                     },
                 ],
                 isError: false,
@@ -413,7 +428,9 @@ export class GetMemoryTool extends BaseTool {
                     isError: true,
                 };
             }
-            const response = { memory };
+            // Strip vector from output (too large, not useful for Claude)
+            const { vector: _v, ...memoryWithoutVector } = memory;
+            const response = { memory: memoryWithoutVector };
             // Get linked todos
             if (params.include_linked_todos ?? true) {
                 const { listTodos } = await import("../../schema/memorySchema.js");
@@ -425,10 +442,18 @@ export class GetMemoryTool extends BaseTool {
             if (params.include_supersession_chain) {
                 // What this memory supersedes
                 if (memory.supersedes_id) {
-                    response.supersedes = await getMemoryById(memory.supersedes_id);
+                    const supersedes = await getMemoryById(memory.supersedes_id);
+                    if (supersedes) {
+                        const { vector: _v2, ...supersedesWithoutVector } = supersedes;
+                        response.supersedes = supersedesWithoutVector;
+                    }
                 }
                 // What supersedes this memory
-                response.superseded_by = await getMemoriesBySupersedes(params.memory_id);
+                const supersededBy = await getMemoriesBySupersedes(params.memory_id);
+                if (supersededBy) {
+                    const { vector: _v3, ...supersededByWithoutVector } = supersededBy;
+                    response.superseded_by = supersededByWithoutVector;
+                }
             }
             // Touch topic last_referenced_at
             if (memory.topic_id) {
