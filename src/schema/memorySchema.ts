@@ -135,6 +135,36 @@ export const PRIORITY_ORDER: Record<TodoPriority, number> = {
 };
 
 // ============================================================================
+// Vector Stripping Utilities
+// ============================================================================
+// LanceDB stores embedding vectors on every record. These are only useful for
+// internal similarity search and must NEVER be serialized to MCP responses —
+// each vector is ~384 float64 values that burn thousands of tokens for zero
+// conversational value.
+
+/** Strip the vector field from a single Todo */
+export function stripTodoVector(todo: Todo): Omit<Todo, 'vector'> {
+  const { vector: _v, ...rest } = todo;
+  return rest;
+}
+
+/** Strip the vector field from a single Memory */
+export function stripMemoryVector(memory: Memory): Omit<Memory, 'vector'> {
+  const { vector: _v, ...rest } = memory;
+  return rest;
+}
+
+/** Strip vector fields from an array of Todos */
+export function stripTodoVectors(todos: Todo[]): Omit<Todo, 'vector'>[] {
+  return todos.map(stripTodoVector);
+}
+
+/** Strip vector fields from an array of Memories */
+export function stripMemoryVectors(memories: Memory[]): Omit<Memory, 'vector'>[] {
+  return memories.map(stripMemoryVector);
+}
+
+// ============================================================================
 // Schema Initialization
 // ============================================================================
 

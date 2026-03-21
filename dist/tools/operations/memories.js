@@ -5,7 +5,7 @@
  * Supports semantic search when embeddings are available, falls back to text search.
  */
 import { BaseTool } from "../base/tool.js";
-import { createMemory, updateMemory, getMemoryById, listMemories, deleteMemory, searchMemoriesVector, getMemoriesBySupersedes, getTopicById, getTopicByName, createTopic, touchTopicLastReferenced, } from "../../schema/memorySchema.js";
+import { createMemory, updateMemory, getMemoryById, listMemories, deleteMemory, searchMemoriesVector, getMemoriesBySupersedes, getTopicById, getTopicByName, createTopic, touchTopicLastReferenced, stripTodoVectors, stripMemoryVectors, } from "../../schema/memorySchema.js";
 import { safeEmbed, getEmbeddingProvider } from "../../embeddings/index.js";
 export class AddMemoryTool extends BaseTool {
     constructor() {
@@ -434,9 +434,10 @@ export class GetMemoryTool extends BaseTool {
             // Get linked todos
             if (params.include_linked_todos ?? true) {
                 const { listTodos } = await import("../../schema/memorySchema.js");
-                response.linked_todos = await listTodos({
+                const linkedTodos = await listTodos({
                     memory_id: params.memory_id,
                 });
+                response.linked_todos = stripTodoVectors(linkedTodos);
             }
             // Get supersession chain
             if (params.include_supersession_chain) {
@@ -528,28 +529,16 @@ export class GetMemoryTimelineTool extends BaseTool {
             });
             // Sort by created_at ascending (chronological)
             memories.sort((a, b) => a.created_at.localeCompare(b.created_at));
-            // Optionally strip content
-            if (!(params.include_content ?? true)) {
-                memories = memories.map((m) => ({
-                    ...m,
-                    content: undefined,
-                    vector: undefined,
-                }));
-            }
-            else {
-                // Remove vectors from output (too noisy)
-                memories = memories.map((m) => ({
-                    ...m,
-                    vector: undefined,
-                }));
-            }
+            // Strip vectors and optionally strip content
+            const includeContent = params.include_content ?? true;
+            const cleanMemories = stripMemoryVectors(memories).map((m) => includeContent ? m : { ...m, content: undefined });
             // Touch topic last_referenced_at
             await touchTopicLastReferenced(params.topic_id);
             return {
                 content: [
                     {
                         type: "text",
-                        text: JSON.stringify(memories, null, 2),
+                        text: JSON.stringify(cleanMemories, null, 2),
                     },
                 ],
                 isError: false,

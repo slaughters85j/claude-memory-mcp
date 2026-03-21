@@ -15,6 +15,7 @@ import {
   getMemoryCountSince,
   Todo,
   TopicSummary,
+  stripTodoVectors,
 } from "../../schema/memorySchema.js";
 
 interface GetSessionContextParams extends ToolParams {
@@ -33,8 +34,8 @@ interface SessionContextResponse {
       medium: number;
       low: number;
     };
-    overdue?: Todo[];
-    high_priority?: Todo[];
+    overdue?: Omit<Todo, 'vector'>[];
+    high_priority?: Omit<Todo, 'vector'>[];
   };
   recent_activity: {
     topics_updated: TopicSummary[];
@@ -97,11 +98,11 @@ export class GetSessionContextTool extends BaseTool<GetSessionContextParams> {
       };
 
       if (includeOverdue) {
-        todoSummary.overdue = await getOverdueTodos();
+        todoSummary.overdue = stripTodoVectors(await getOverdueTodos());
       }
 
       if (includeHighPriority) {
-        todoSummary.high_priority = await getHighPriorityTodos();
+        todoSummary.high_priority = stripTodoVectors(await getHighPriorityTodos());
       }
 
       // Get recent activity

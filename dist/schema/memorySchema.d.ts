@@ -83,6 +83,14 @@ export declare let todosTable: lancedb.Table | null;
 export declare function generateId(): string;
 export declare function nowISO(): string;
 export declare const PRIORITY_ORDER: Record<TodoPriority, number>;
+/** Strip the vector field from a single Todo */
+export declare function stripTodoVector(todo: Todo): Omit<Todo, 'vector'>;
+/** Strip the vector field from a single Memory */
+export declare function stripMemoryVector(memory: Memory): Omit<Memory, 'vector'>;
+/** Strip vector fields from an array of Todos */
+export declare function stripTodoVectors(todos: Todo[]): Omit<Todo, 'vector'>[];
+/** Strip vector fields from an array of Memories */
+export declare function stripMemoryVectors(memories: Memory[]): Omit<Memory, 'vector'>[];
 export declare function initializeMemoryTables(db: lancedb.Connection, vectorDimensions: number): Promise<void>;
 export declare function createTopic(data: Omit<Topic, "id" | "created_at" | "updated_at" | "last_referenced_at">): Promise<Topic>;
 export declare function updateTopic(id: string, updates: Partial<Omit<Topic, "id" | "created_at">>): Promise<Topic | null>;
