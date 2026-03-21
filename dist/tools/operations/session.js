@@ -5,7 +5,7 @@
  * Surfaces unfinished work and recent activity without Claude having to ask multiple questions.
  */
 import { BaseTool } from "../base/tool.js";
-import { getOverdueTodos, getHighPriorityTodos, getTodoCountsByPriority, getRecentlyUpdatedTopics, getStaleTopics, getMemoryCountSince, } from "../../schema/memorySchema.js";
+import { getOverdueTodos, getHighPriorityTodos, getTodoCountsByPriority, getRecentlyUpdatedTopics, getStaleTopics, getMemoryCountSince, stripTodoVectors, } from "../../schema/memorySchema.js";
 export class GetSessionContextTool extends BaseTool {
     constructor() {
         super(...arguments);
@@ -55,10 +55,10 @@ export class GetSessionContextTool extends BaseTool {
                 by_priority: priorityCounts,
             };
             if (includeOverdue) {
-                todoSummary.overdue = await getOverdueTodos();
+                todoSummary.overdue = stripTodoVectors(await getOverdueTodos());
             }
             if (includeHighPriority) {
-                todoSummary.high_priority = await getHighPriorityTodos();
+                todoSummary.high_priority = stripTodoVectors(await getHighPriorityTodos());
             }
             // Get recent activity
             let recentTopics = await getRecentlyUpdatedTopics(recentDays);

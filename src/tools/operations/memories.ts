@@ -21,6 +21,8 @@ import {
   Memory,
   MemoryKind,
   MemorySearchResult,
+  stripTodoVectors,
+  stripMemoryVectors,
 } from "../../schema/memorySchema.js";
 import { safeEmbed, getEmbeddingProvider } from "../../embeddings/index.js";
 
@@ -543,9 +545,10 @@ export class GetMemoryTool extends BaseTool<GetMemoryParams> {
       // Get linked todos
       if (params.include_linked_todos ?? true) {
         const { listTodos } = await import("../../schema/memorySchema.js");
-        response.linked_todos = await listTodos({
+        const linkedTodos = await listTodos({
           memory_id: params.memory_id,
         });
+        response.linked_todos = stripTodoVectors(linkedTodos);
       }
 
       // Get supersession chain
@@ -656,20 +659,11 @@ export class GetMemoryTimelineTool extends BaseTool<GetMemoryTimelineParams> {
       // Sort by created_at ascending (chronological)
       memories.sort((a, b) => a.created_at.localeCompare(b.created_at));
 
-      // Optionally strip content
-      if (!(params.include_content ?? true)) {
-        memories = memories.map((m) => ({
-          ...m,
-          content: undefined as any,
-          vector: undefined as any,
-        }));
-      } else {
-        // Remove vectors from output (too noisy)
-        memories = memories.map((m) => ({
-          ...m,
-          vector: undefined as any,
-        }));
-      }
+      // Strip vectors and optionally strip content
+      const includeContent = params.include_content ?? true;
+      const cleanMemories = stripMemoryVectors(memories).map((m) =>
+        includeContent ? m : { ...m, content: undefined as any }
+      );
 
       // Touch topic last_referenced_at
       await touchTopicLastReferenced(params.topic_id);
@@ -678,7 +672,7 @@ export class GetMemoryTimelineTool extends BaseTool<GetMemoryTimelineParams> {
         content: [
           {
             type: "text",
-            text: JSON.stringify(memories, null, 2),
+            text: JSON.stringify(cleanMemories, null, 2),
           },
         ],
         isError: false,
