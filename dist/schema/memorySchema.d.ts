@@ -82,6 +82,37 @@ export declare let memoriesTable: lancedb.Table | null;
 export declare let todosTable: lancedb.Table | null;
 export declare function generateId(): string;
 export declare function nowISO(): string;
+/**
+ * Escape a value for use as a SQL string literal in a LanceDB filter.
+ * DataFusion follows the SQL standard, where an embedded single quote is
+ * escaped by doubling it.
+ */
+export declare function sqlString(value: string): string;
+/**
+ * Predicate fragment excluding the `_system` sentinel rows that
+ * initializeMemoryTables writes for schema inference. Pushed into SQL so the
+ * query engine applies it, rather than a JavaScript filter running over an
+ * already-truncated page of results.
+ *
+ * The `IS NOT TRUE` is load-bearing and must not be simplified to `NOT`.
+ * DataFusion's `array_has` returns NULL rather than false when the list is
+ * empty, and `NOT NULL` is NULL, which no row satisfies. Written as `NOT
+ * array_has(...)` this predicate silently discards every row whose `tags` is
+ * `[]`. `IS NOT TRUE` matches both false and NULL, restoring parity with the
+ * JavaScript filter it replaced, where `[].includes("_system")` was false.
+ *
+ * See scripts/verify-counts.ts, which asserts that the naive form loses rows.
+ */
+export declare const EXCLUDE_SYSTEM_ROWS = "array_has(tags, '_system') IS NOT TRUE";
+/**
+ * Return every row matching `filter`, with no implicit ceiling.
+ *
+ * LanceDB's query builder applies a default limit of 10 when `.limit()` is
+ * never called, so `table.query().where(f).toArray()` silently yields only the
+ * first ten matches. Counting the matches first and then requesting exactly
+ * that many rows keeps the scan bounded without inventing an arbitrary maximum.
+ */
+export declare function scanAll<T>(table: lancedb.Table, filter: string): Promise<T[]>;
 export declare const PRIORITY_ORDER: Record<TodoPriority, number>;
 /** Strip the vector field from a single Todo */
 export declare function stripTodoVector(todo: Todo): Omit<Todo, 'vector'>;

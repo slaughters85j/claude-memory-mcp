@@ -126,6 +126,47 @@ export function nowISO(): string {
   return new Date().toISOString();
 }
 
+/**
+ * Escape a value for use as a SQL string literal in a LanceDB filter.
+ * DataFusion follows the SQL standard, where an embedded single quote is
+ * escaped by doubling it.
+ */
+export function sqlString(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Predicate fragment excluding the `_system` sentinel rows that
+ * initializeMemoryTables writes for schema inference. Pushed into SQL so the
+ * query engine applies it, rather than a JavaScript filter running over an
+ * already-truncated page of results.
+ *
+ * The `IS NOT TRUE` is load-bearing and must not be simplified to `NOT`.
+ * DataFusion's `array_has` returns NULL rather than false when the list is
+ * empty, and `NOT NULL` is NULL, which no row satisfies. Written as `NOT
+ * array_has(...)` this predicate silently discards every row whose `tags` is
+ * `[]`. `IS NOT TRUE` matches both false and NULL, restoring parity with the
+ * JavaScript filter it replaced, where `[].includes("_system")` was false.
+ *
+ * See scripts/verify-counts.ts, which asserts that the naive form loses rows.
+ */
+export const EXCLUDE_SYSTEM_ROWS = "array_has(tags, '_system') IS NOT TRUE";
+
+/**
+ * Return every row matching `filter`, with no implicit ceiling.
+ *
+ * LanceDB's query builder applies a default limit of 10 when `.limit()` is
+ * never called, so `table.query().where(f).toArray()` silently yields only the
+ * first ten matches. Counting the matches first and then requesting exactly
+ * that many rows keeps the scan bounded without inventing an arbitrary maximum.
+ */
+export async function scanAll<T>(table: lancedb.Table, filter: string): Promise<T[]> {
+  const matches = await table.countRows(filter);
+  if (matches === 0) return [];
+  const rows = await table.query().where(filter).limit(matches).toArray();
+  return rows as unknown as T[];
+}
+
 // Priority ordering for sorting
 export const PRIORITY_ORDER: Record<TodoPriority, number> = {
   urgent: 0,
@@ -575,8 +616,9 @@ export async function getMemoriesBySupersedes(supersededId: string): Promise<Mem
 export async function countMemoriesByTopic(topicId: string): Promise<number> {
   if (!memoriesTable) throw new Error("Memories table not initialized");
 
-  const results = await memoriesTable.query().where(`topic_id = '${topicId}'`).toArray();
-  return results.filter((m: any) => !m.tags?.includes("_system")).length;
+  return await memoriesTable.countRows(
+    `topic_id = ${sqlString(topicId)} AND ${EXCLUDE_SYSTEM_ROWS}`,
+  );
 }
 
 // ============================================================================
@@ -717,33 +759,34 @@ export async function deleteTodo(id: string): Promise<boolean> {
 export async function countOpenTodosByTopic(topicId: string): Promise<number> {
   if (!todosTable) throw new Error("Todos table not initialized");
 
-  const results = await todosTable.query()
-    .where(`topic_id = '${topicId}' AND status IN ('open', 'in_progress', 'blocked')`)
-    .toArray();
-  return results.filter((t: any) => !t.tags?.includes("_system")).length;
+  return await todosTable.countRows(
+    `topic_id = ${sqlString(topicId)} ` +
+      `AND status IN ('open', 'in_progress', 'blocked') ` +
+      `AND ${EXCLUDE_SYSTEM_ROWS}`,
+  );
 }
 
 export async function getTodoCountsByPriority(): Promise<Record<TodoPriority, number>> {
   if (!todosTable) throw new Error("Todos table not initialized");
 
-  const results = await todosTable.query()
-    .where(`status IN ('open', 'in_progress', 'blocked')`)
-    .toArray();
+  const table = todosTable;
+  const priorities: TodoPriority[] = ["urgent", "high", "medium", "low"];
 
-  const todos = (results as unknown as Todo[]).filter(t => !t.tags.includes("_system"));
+  const entries = await Promise.all(
+    priorities.map(
+      async (priority) =>
+        [
+          priority,
+          await table.countRows(
+            `status IN ('open', 'in_progress', 'blocked') ` +
+              `AND priority = ${sqlString(priority)} ` +
+              `AND ${EXCLUDE_SYSTEM_ROWS}`,
+          ),
+        ] as const,
+    ),
+  );
 
-  const counts: Record<TodoPriority, number> = {
-    urgent: 0,
-    high: 0,
-    medium: 0,
-    low: 0,
-  };
-
-  for (const todo of todos) {
-    counts[todo.priority]++;
-  }
-
-  return counts;
+  return Object.fromEntries(entries) as Record<TodoPriority, number>;
 }
 
 export async function getOverdueTodos(): Promise<Todo[]> {
@@ -773,10 +816,11 @@ export async function getRecentlyUpdatedTopics(days: number = 7): Promise<Topic[
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffISO = cutoff.toISOString();
 
-  const results = await topicsTable.query().toArray();
-  const topics = (results as unknown as Topic[])
-    .filter(t => !t.tags.includes("_system"))
-    .filter(t => t.updated_at >= cutoffISO || t.last_referenced_at >= cutoffISO);
+  const since = sqlString(cutoffISO);
+  const topics = await scanAll<Topic>(
+    topicsTable,
+    `(updated_at >= ${since} OR last_referenced_at >= ${since}) AND ${EXCLUDE_SYSTEM_ROWS}`,
+  );
 
   return topics.sort((a, b) => b.last_referenced_at.localeCompare(a.last_referenced_at));
 }
@@ -788,15 +832,12 @@ export async function getStaleTopics(staleDays: number = 30): Promise<Topic[]> {
   cutoff.setDate(cutoff.getDate() - staleDays);
   const cutoffISO = cutoff.toISOString();
 
-  const results = await topicsTable.query()
-    .where(`status = 'active'`)
-    .toArray();
-
-  const topics = (results as unknown as Topic[])
-    .filter(t => !t.tags.includes("_system"))
-    .filter(t => t.last_referenced_at < cutoffISO);
-
-  return topics;
+  return await scanAll<Topic>(
+    topicsTable,
+    `status = 'active' ` +
+      `AND last_referenced_at < ${sqlString(cutoffISO)} ` +
+      `AND ${EXCLUDE_SYSTEM_ROWS}`,
+  );
 }
 
 export async function getMemoryCountSince(days: number): Promise<{ added: number; updated: number }> {
@@ -806,11 +847,15 @@ export async function getMemoryCountSince(days: number): Promise<{ added: number
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffISO = cutoff.toISOString();
 
-  const results = await memoriesTable.query().toArray();
-  const memories = (results as unknown as Memory[]).filter(m => !m.tags.includes("_system"));
+  const table = memoriesTable;
+  const since = sqlString(cutoffISO);
 
-  const added = memories.filter(m => m.created_at >= cutoffISO).length;
-  const updated = memories.filter(m => m.updated_at >= cutoffISO && m.created_at < cutoffISO).length;
+  const [added, updated] = await Promise.all([
+    table.countRows(`created_at >= ${since} AND ${EXCLUDE_SYSTEM_ROWS}`),
+    table.countRows(
+      `updated_at >= ${since} AND created_at < ${since} AND ${EXCLUDE_SYSTEM_ROWS}`,
+    ),
+  ]);
 
   return { added, updated };
 }
