@@ -1,12 +1,17 @@
 /**
  * Per-process handler serialization.
  *
- * The MCP SDK dispatches tool handlers as async functions that interleave freely
- * across their `await` points. That interleaving breaks the guarantee that each
- * handler pins one table version for its whole body: a second handler calling
- * refreshTables() (which advances the shared handle in place) while the first is
- * mid-scan would move the version out from under it, un-pinning the count-then-
- * read that scanAll relies on.
+ * The MCP SDK dispatches tool handlers concurrently, not serially — this was
+ * verified, not assumed. Its transport `onmessage` calls `_onrequest` without
+ * awaiting, and `_onrequest` runs the handler as a floating
+ * `Promise.resolve().then(() => handler(...))` (see the SDK's
+ * shared/protocol.js), then reads the next message immediately. Empirically, two
+ * overlapping tool calls to one server both ENTER their handler before either
+ * EXITs. So handlers interleave across their `await` points, which breaks the
+ * guarantee that each handler pins one table version for its whole body: a second
+ * handler calling refreshTables() (which advances the shared handle in place)
+ * while the first is mid-scan would move the version out from under it, un-pinning
+ * the count-then-read that scanAll relies on.
  *
  * runExclusive() chains handler bodies so each runs to completion before the
  * next begins. It is a promise-chain mutex, not a lock with acquire/release, so
