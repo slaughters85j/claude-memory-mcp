@@ -41,12 +41,36 @@ server from inside itself.
 Expected result: `topics` collapses from ~1,600 versions to a handful, and the
 28M store shrinks noticeably.
 
+## Deduplicating legacy rows (one-time)
+
+The old delete+add update path could race into duplicate-id rows under
+concurrent writers (and blanked tag strings as a side effect).
+`scripts/dedupe-rows.ts` collapses any duplicates, keeping the newest copy per
+id. The atomic `table.update()` fix prevents new duplicates, so this is a
+one-time cleanup.
+
+1. Quit Claude Desktop.
+2. `git pull` (gets the atomic-update fix and this script).
+3. Preview, then run:
+
+   ```
+   npx tsx scripts/dedupe-rows.ts --dry-run
+   npx tsx scripts/dedupe-rows.ts
+   ```
+
+   It backs up to `~/Backups/claude-memory/prededupe-<UTC>.tar.gz`, keeps the
+   newest row per id, and integrity-checks the result.
+4. Reopen Claude Desktop.
+
+The `table.update()` fix updates all rows sharing an id (rather than adding
+more), so it is safe even before the dedupe runs — the ordering is not critical.
+
 ## If something looks wrong
 
-Restore from the pre-run tarball:
+Restore from the most recent pre-run tarball (`precompact-*` or `prededupe-*`):
 
 ```
 cd "/Users/system-backup/Library/Mobile Documents/com~apple~CloudDocs/Claude.AI Persistent Memory"
 mv memory-db memory-db.broken
-tar -xzf ~/Backups/claude-memory/precompact-<timestamp>.tar.gz
+tar -xzf ~/Backups/claude-memory/<newest-backup>.tar.gz
 ```

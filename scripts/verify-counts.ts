@@ -531,6 +531,18 @@ async function runChecks(): Promise<void> {
     assert.deepEqual([...afterMem!.tags], ["x", "y"]);
     assert.equal((afterMem!.vector as number[]).length, DEFAULT_VECTOR_DIMENSIONS);
   });
+
+  // The content-edit path recomputes the embedding and updates the vector column;
+  // 0.5 is exactly representable in float32, so it compares cleanly.
+  await updateMemory(vecMemory.id, {
+    content: "edited",
+    vector: new Array(DEFAULT_VECTOR_DIMENSIONS).fill(0.5),
+  } as never);
+  const afterVec = await getMemoryById(vecMemory.id);
+  check("updateMemory writes a new vector correctly (content-edit path)", () => {
+    assert.equal(afterVec!.content, "edited");
+    assert.equal(Array.from(afterVec!.vector as Iterable<number>)[0], 0.5);
+  });
 }
 
 // ============================================================================
