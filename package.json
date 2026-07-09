@@ -18,7 +18,10 @@
     "build": "tsc && shx chmod +x dist/*.js",
     "prepare": "npm run build",
     "watch": "tsc --watch",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.scripts.json",
+    "verify:counts": "tsx scripts/verify-counts.ts",
+    "test": "npm run typecheck && npm run verify:counts"
   },
   "keywords": [
     "mcp",
