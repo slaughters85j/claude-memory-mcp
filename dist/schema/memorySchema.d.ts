@@ -129,24 +129,6 @@ export declare function inListSQL(column: string, values: readonly string[]): st
  */
 export declare function requireAllTagsSQL(tags: readonly string[]): string;
 /**
- * Rows to fetch above a caller's `limit` before de-duplicating. Filtering now
- * happens entirely in SQL, so the only post-fetch reducer is dedupById; this
- * small headroom lets it drop transient delete+add duplicate rows without
- * shrinking the page below `limit`. Far tighter than the old limit*2
- * over-fetch, which existed to survive client-side filtering rejecting >50% of
- * the page.
- */
-export declare const DEDUP_HEADROOM = 8;
-/**
- * Drop rows whose id was already seen, preserving order. The delete+add update
- * pattern can transiently surface an old and a new copy of the same row; this
- * collapses them. Callers fetch DEDUP_HEADROOM extra rows and slice back to
- * `limit`, so this shrinkage does not under-fill the page.
- */
-export declare function dedupById<T extends {
-    id: string;
-}>(rows: T[]): T[];
-/**
  * Normalize a row read via toArray() into plain JS. List/vector columns come
  * back as Arrow Vector proxies that add() re-serializes incorrectly (tag strings
  * blanked, floats nulled); Array.from() materializes their real values. Used by

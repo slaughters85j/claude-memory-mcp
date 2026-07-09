@@ -82,30 +82,6 @@ export function requireAllTagsSQL(tags) {
     return tags.map((tag) => `array_has(tags, ${sqlString(tag)})`).join(" AND ");
 }
 /**
- * Rows to fetch above a caller's `limit` before de-duplicating. Filtering now
- * happens entirely in SQL, so the only post-fetch reducer is dedupById; this
- * small headroom lets it drop transient delete+add duplicate rows without
- * shrinking the page below `limit`. Far tighter than the old limit*2
- * over-fetch, which existed to survive client-side filtering rejecting >50% of
- * the page.
- */
-export const DEDUP_HEADROOM = 8;
-/**
- * Drop rows whose id was already seen, preserving order. The delete+add update
- * pattern can transiently surface an old and a new copy of the same row; this
- * collapses them. Callers fetch DEDUP_HEADROOM extra rows and slice back to
- * `limit`, so this shrinkage does not under-fill the page.
- */
-export function dedupById(rows) {
-    const seen = new Set();
-    return rows.filter((row) => {
-        if (seen.has(row.id))
-            return false;
-        seen.add(row.id);
-        return true;
-    });
-}
-/**
  * Normalize a row read via toArray() into plain JS. List/vector columns come
  * back as Arrow Vector proxies that add() re-serializes incorrectly (tag strings
  * blanked, floats nulled); Array.from() materializes their real values. Used by
@@ -336,9 +312,9 @@ export async function listTopics(filters) {
     const rows = await topicsTable
         .query()
         .where(conditions.join(" AND "))
-        .limit(limit + DEDUP_HEADROOM)
+        .limit(limit)
         .toArray();
-    return dedupById(rows).slice(0, limit);
+    return rows;
 }
 export async function deleteTopic(id) {
     if (!topicsTable)
@@ -423,9 +399,9 @@ export async function listMemories(filters) {
     const rows = await memoriesTable
         .query()
         .where(conditions.join(" AND "))
-        .limit(limit + DEDUP_HEADROOM)
+        .limit(limit)
         .toArray();
-    return dedupById(rows).slice(0, limit);
+    return rows;
 }
 export async function searchMemoriesVector(queryVector, filters, limit = 10) {
     if (!memoriesTable)
@@ -455,9 +431,9 @@ export async function searchMemoriesVector(queryVector, filters, limit = 10) {
     const rows = await memoriesTable
         .vectorSearch(queryVector)
         .where(conditions.join(" AND "))
-        .limit(limit + DEDUP_HEADROOM)
+        .limit(limit)
         .toArray();
-    return dedupById(rows).slice(0, limit);
+    return rows;
 }
 export async function deleteMemory(id) {
     if (!memoriesTable)
@@ -555,9 +531,9 @@ export async function listTodos(filters) {
     const rows = await todosTable
         .query()
         .where(conditions.join(" AND "))
-        .limit(limit + DEDUP_HEADROOM)
+        .limit(limit)
         .toArray();
-    return dedupById(rows).slice(0, limit);
+    return rows;
 }
 export async function deleteTodo(id) {
     if (!todosTable)
