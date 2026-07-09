@@ -28,8 +28,12 @@ import {
   EXCLUDE_SYSTEM_ROWS,
   countMemoriesByTopic,
   countOpenTodosByTopic,
+  createMemory,
+  createTopic,
   generateId,
+  getMemoryById,
   getMemoryCountSince,
+  getTopicById,
   getRecentlyUpdatedTopics,
   getStaleTopics,
   getTodoCountsByPriority,
@@ -43,6 +47,9 @@ import {
   sqlString,
   todosTable,
   topicsTable,
+  touchTopicLastReferenced,
+  updateMemory,
+  updateTopic,
 } from "../src/schema/memorySchema.js";
 import type {
   Memory,
@@ -456,6 +463,74 @@ async function runChecks(): Promise<void> {
     assert.equal(dupPage.length, 2);
     assert.equal(new Set(dupPage.map((t) => t.id)).size, 2);
   });
+
+  console.log("\natomic updates (no duplicate rows under concurrency)");
+  const raceId = generateId();
+  await topicsTable!.add([
+    {
+      id: raceId,
+      name: "race",
+      description: "race fixture",
+      tags: ["seed"],
+      status: "active",
+      importance: 0.5,
+      created_at: daysAgo(1),
+      updated_at: daysAgo(1),
+      last_referenced_at: daysAgo(1),
+    },
+  ] as unknown as Record<string, unknown>[]);
+  // Fire many concurrent touches and updates at one id. The old delete+add
+  // pattern interleaved into duplicate rows; mergeInsert/update commit atomically,
+  // so the row count must stay at exactly one.
+  // Promise.all rejects if any op exhausts its conflict retries, so a clean
+  // resolve also asserts the retry wrapper actually resolves the races.
+  await Promise.all([
+    ...Array.from({ length: 5 }, () => touchTopicLastReferenced(raceId)),
+    ...Array.from({ length: 3 }, (_, i) => updateTopic(raceId, { description: `edit-${i}` })),
+  ]);
+  const raceCount = await topicsTable!.countRows(`id = ${sqlString(raceId)}`);
+  check("concurrent touch+update on one id leaves exactly one row", () => {
+    assert.equal(raceCount, 1);
+  });
+
+  console.log("\ncolumn-update fidelity (tags preserved, null vectors tolerated)");
+  const fidTopic = await createTopic({
+    name: "fidelity",
+    description: "d",
+    tags: ["alpha", "beta"],
+    status: "active",
+    importance: 0.5,
+  } as never);
+  await updateTopic(fidTopic.id, { importance: 0.9 });
+  const afterImportance = await getTopicById(fidTopic.id);
+  check("updateTopic leaves untouched tags intact (no Arrow-proxy corruption)", () => {
+    assert.deepEqual([...afterImportance!.tags], ["alpha", "beta"]);
+    assert.equal(afterImportance!.importance, 0.9);
+  });
+  await updateTopic(fidTopic.id, { tags: ["gamma"] });
+  const afterTags = await getTopicById(fidTopic.id);
+  check("updateTopic can change the tags list", () => {
+    assert.deepEqual([...afterTags!.tags], ["gamma"]);
+  });
+
+  const vecMemory = await createMemory({
+    topic_id: fidTopic.id,
+    title: "m",
+    content: "c",
+    kind: "insight",
+    tags: ["x", "y"],
+    importance: 0.5,
+    conversation_summary: "s",
+    supersedes_id: "none",
+    vector: zeroVector(),
+  } as never);
+  await updateMemory(vecMemory.id, { importance: 0.8 });
+  const afterMem = await getMemoryById(vecMemory.id);
+  check("updateMemory preserves tags and vector when updating a scalar column", () => {
+    assert.equal(afterMem!.importance, 0.8);
+    assert.deepEqual([...afterMem!.tags], ["x", "y"]);
+    assert.equal((afterMem!.vector as number[]).length, DEFAULT_VECTOR_DIMENSIONS);
+  });
 }
 
 // ============================================================================
@@ -476,7 +551,11 @@ async function main(): Promise<void> {
 
     console.log(`\n${checksRun} checks passed against ${dir}\n`);
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Best-effort temp cleanup; never let it mask a real check failure.
+    }
   }
 }
 

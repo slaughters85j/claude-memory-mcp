@@ -146,6 +146,13 @@ export declare const DEDUP_HEADROOM = 8;
 export declare function dedupById<T extends {
     id: string;
 }>(rows: T[]): T[];
+/**
+ * Normalize a row read via toArray() into plain JS. List/vector columns come
+ * back as Arrow Vector proxies that add() re-serializes incorrectly (tag strings
+ * blanked, floats nulled); Array.from() materializes their real values. Used by
+ * the dedupe cleanup, which re-adds rows it read via toArray().
+ */
+export declare function toPlainRow(row: Record<string, unknown>): Record<string, unknown>;
 export declare const PRIORITY_ORDER: Record<TodoPriority, number>;
 /** Strip the vector field from a single Todo */
 export declare function stripTodoVector(todo: Todo): Omit<Todo, 'vector'>;

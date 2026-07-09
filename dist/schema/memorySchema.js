@@ -105,6 +105,53 @@ export function dedupById(rows) {
         return true;
     });
 }
+/**
+ * Normalize a row read via toArray() into plain JS. List/vector columns come
+ * back as Arrow Vector proxies that add() re-serializes incorrectly (tag strings
+ * blanked, floats nulled); Array.from() materializes their real values. Used by
+ * the dedupe cleanup, which re-adds rows it read via toArray().
+ */
+export function toPlainRow(row) {
+    const out = {};
+    for (const [key, value] of Object.entries(row)) {
+        out[key] =
+            value != null && typeof value === "object" && Symbol.iterator in value
+                ? Array.from(value)
+                : value;
+    }
+    return out;
+}
+/** Atomically update named columns of the row with this id. */
+async function updateColumns(table, id, values) {
+    await table.update({ where: `id = ${sqlString(id)}`, values });
+}
+/** Times an atomic write is retried when it loses a commit race. */
+const COMMIT_RETRY_ATTEMPTS = 12;
+/** LanceDB surfaces a lost commit race as an unresolved "Commit conflict" error. */
+function isCommitConflict(error) {
+    return error instanceof Error && /commit conflict/i.test(error.message);
+}
+/**
+ * Run an atomic write, retrying on LanceDB commit conflicts. LanceDB uses
+ * optimistic concurrency and does not auto-resolve conflicting commits — the
+ * loser must rerun against the latest version. `op` should re-read current state
+ * each attempt, so a retry merges with the winning write instead of clobbering
+ * it (this is also what closes the read-modify-write lost-update window).
+ */
+async function withCommitRetry(op) {
+    for (let attempt = 0;; attempt += 1) {
+        try {
+            return await op();
+        }
+        catch (error) {
+            if (!isCommitConflict(error) || attempt >= COMMIT_RETRY_ATTEMPTS - 1)
+                throw error;
+            // Jittered backoff so concurrent writers don't retry in lockstep.
+            const delayMs = (attempt + 1) * 8 + Math.random() * 12;
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+}
 // Priority ordering for sorting
 export const PRIORITY_ORDER = {
     urgent: 0,
@@ -241,18 +288,15 @@ export async function createTopic(data) {
 export async function updateTopic(id, updates) {
     if (!topicsTable)
         throw new Error("Topics table not initialized");
-    const existing = await getTopicById(id);
-    if (!existing)
-        return null;
-    const updated = {
-        ...existing,
-        ...updates,
-        updated_at: nowISO(),
-    };
-    // LanceDB update requires delete + add for full record updates
-    await topicsTable.delete(`id = '${id}'`);
-    await topicsTable.add([updated]);
-    return updated;
+    const table = topicsTable;
+    return withCommitRetry(async () => {
+        const existing = await getTopicById(id);
+        if (!existing)
+            return null;
+        const now = nowISO();
+        await updateColumns(table, id, { ...updates, updated_at: now });
+        return { ...existing, ...updates, updated_at: now };
+    });
 }
 export async function getTopicById(id) {
     if (!topicsTable)
@@ -305,15 +349,15 @@ export async function deleteTopic(id) {
 export async function touchTopicLastReferenced(id) {
     if (!topicsTable)
         throw new Error("Topics table not initialized");
-    const existing = await getTopicById(id);
-    if (!existing)
-        return;
-    const updated = {
-        ...existing,
-        last_referenced_at: nowISO(),
-    };
-    await topicsTable.delete(`id = '${id}'`);
-    await topicsTable.add([updated]);
+    const table = topicsTable;
+    // Single-column atomic update, retried on conflict. This is the hot path — it
+    // fires on every topic reference from multiple concurrent servers — so it must
+    // not read-modify-write or delete+add, both of which race into duplicate rows.
+    // update() touches only last_referenced_at and no-ops when the id is absent.
+    await withCommitRetry(() => table.update({
+        where: `id = ${sqlString(id)}`,
+        values: { last_referenced_at: nowISO() },
+    }));
 }
 // ============================================================================
 // CRUD Operations for Memories
@@ -334,18 +378,15 @@ export async function createMemory(data) {
 export async function updateMemory(id, updates) {
     if (!memoriesTable)
         throw new Error("Memories table not initialized");
-    const existing = await getMemoryById(id);
-    if (!existing)
-        return null;
-    const updated = {
-        ...existing,
-        ...updates,
-        updated_at: nowISO(),
-    };
-    // LanceDB update requires delete + add for full record updates
-    await memoriesTable.delete(`id = '${id}'`);
-    await memoriesTable.add([updated]);
-    return updated;
+    const table = memoriesTable;
+    return withCommitRetry(async () => {
+        const existing = await getMemoryById(id);
+        if (!existing)
+            return null;
+        const now = nowISO();
+        await updateColumns(table, id, { ...updates, updated_at: now });
+        return { ...existing, ...updates, updated_at: now };
+    });
 }
 export async function getMemoryById(id) {
     if (!memoriesTable)
@@ -455,30 +496,29 @@ export async function createTodo(data) {
 export async function updateTodo(id, updates) {
     if (!todosTable)
         throw new Error("Todos table not initialized");
-    const existing = await getTodoById(id);
-    if (!existing)
-        return null;
-    const now = nowISO();
-    let completedAt = existing.completed_at;
-    // Handle status transitions
-    if (updates.status) {
-        if ((updates.status === "done" || updates.status === "cancelled") && !existing.completed_at) {
-            completedAt = now;
+    const table = todosTable;
+    return withCommitRetry(async () => {
+        const existing = await getTodoById(id);
+        if (!existing)
+            return null;
+        const now = nowISO();
+        let completedAt = existing.completed_at;
+        // Handle status transitions
+        if (updates.status) {
+            if ((updates.status === "done" || updates.status === "cancelled") && !existing.completed_at) {
+                completedAt = now;
+            }
+            else if (updates.status === "open" || updates.status === "in_progress" || updates.status === "blocked") {
+                completedAt = null;
+            }
         }
-        else if (updates.status === "open" || updates.status === "in_progress" || updates.status === "blocked") {
-            completedAt = null;
-        }
-    }
-    const updated = {
-        ...existing,
-        ...updates,
-        updated_at: now,
-        completed_at: completedAt,
-    };
-    // LanceDB update requires delete + add for full record updates
-    await todosTable.delete(`id = '${id}'`);
-    await todosTable.add([updated]);
-    return updated;
+        await updateColumns(table, id, {
+            ...updates,
+            updated_at: now,
+            completed_at: completedAt,
+        });
+        return { ...existing, ...updates, updated_at: now, completed_at: completedAt };
+    });
 }
 export async function getTodoById(id) {
     if (!todosTable)
