@@ -20,8 +20,10 @@
     "watch": "tsc --watch",
     "seed": "tsx src/seed.ts",
     "typecheck": "tsc --noEmit -p tsconfig.scripts.json",
+    "check:sql": "tsx scripts/check-sql-escaping.ts",
     "verify:counts": "tsx scripts/verify-counts.ts",
-    "test": "npm run typecheck && npm run verify:counts"
+    "verify:hardening": "tsx scripts/verify-hardening.ts",
+    "test": "npm run typecheck && npm run check:sql && npm run verify:counts && npm run verify:hardening"
   },
   "keywords": [
     "mcp",

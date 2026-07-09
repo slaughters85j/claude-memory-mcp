@@ -132,7 +132,16 @@ export function nowISO(): string {
  * escaped by doubling it.
  */
 export function sqlString(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+  return `'${value.replace(/'/g, "''")}'`; // sql-escape-allowed
+}
+
+/**
+ * Parenthesized, comma-separated list of escaped string literals for an
+ * `IN (...)` clause, e.g. `('open', 'in_progress')`. Escapes every value rather
+ * than trusting a TypeScript enum to constrain the runtime input it is given.
+ */
+export function sqlStringList(values: readonly string[]): string {
+  return `(${values.map(sqlString).join(", ")})`;
 }
 
 /**
@@ -152,13 +161,24 @@ export function sqlString(value: string): string {
  */
 export const EXCLUDE_SYSTEM_ROWS = "array_has(tags, '_system') IS NOT TRUE";
 
+/** Times scanAll re-reads when the matching set changes between count and scan. */
+export const SCAN_STABILITY_ATTEMPTS = 5;
+
 /**
- * Return every row matching `filter`, with no implicit ceiling.
+ * Return every row matching `filter`, as one consistent set, with no implicit
+ * ceiling. LanceDB's query builder applies a default limit of 10 when `.limit()`
+ * is never called, so an unbounded `.toArray()` silently truncates.
  *
- * LanceDB's query builder applies a default limit of 10 when `.limit()` is
- * never called, so `table.query().where(f).toArray()` silently yields only the
- * first ten matches. Counting the matches first and then requesting exactly
- * that many rows keeps the scan bounded without inventing an arbitrary maximum.
+ * `countRows()` and the row read are two separate operations. checkout(version)
+ * mutates the shared table handle in place (verified against @lancedb/lancedb
+ * 0.15), so it cannot pin a snapshot on these module-level tables. Instead this
+ * detects a concurrent insert: request one more row than the count. If it comes
+ * back, the set grew mid-scan — discard and retry. If it does not, every match
+ * was retrieved (a row deleted mid-scan only lowers the count, still complete;
+ * `matches === 0` requests limit(1) and returns [] only when nothing appeared).
+ * A set changing faster than SCAN_STABILITY_ATTEMPTS reads throws rather than
+ * returning a partial result — loud failure is correct, and at ~80 rows with
+ * three writers it will not fire in practice.
  *
  * Pass `columns` to project only the fields you need — e.g. to avoid
  * materializing the 384-float `vector` column when scanning todos or memories.
@@ -169,12 +189,17 @@ export async function scanAll<T>(
   filter: string,
   columns?: string[],
 ): Promise<T[]> {
-  const matches = await table.countRows(filter);
-  if (matches === 0) return [];
-  let query = table.query().where(filter);
-  if (columns) query = query.select(columns);
-  const rows = await query.limit(matches).toArray();
-  return rows as unknown as T[];
+  for (let attempt = 0; attempt < SCAN_STABILITY_ATTEMPTS; attempt += 1) {
+    const matches = await table.countRows(filter);
+    let query = table.query().where(filter);
+    if (columns) query = query.select(columns);
+    const rows = await query.limit(matches + 1).toArray();
+    if (rows.length <= matches) {
+      return rows as unknown as T[];
+    }
+    // rows.length > matches: the matching set grew during the read. Retry.
+  }
+  throw new Error("scanAll: '" + filter + "' is changing faster than it can be scanned");
 }
 
 /**
@@ -182,7 +207,7 @@ export async function scanAll<T>(
  * priority, kind and topic-id membership tests pushed into SQL.
  */
 export function inListSQL(column: string, values: readonly string[]): string {
-  return `${column} IN (${values.map(sqlString).join(", ")})`;
+  return `${column} IN ${sqlStringList(values)}`;
 }
 
 /**
@@ -413,14 +438,14 @@ export async function updateTopic(id: string, updates: Partial<Omit<Topic, "id" 
 export async function getTopicById(id: string): Promise<Topic | null> {
   if (!topicsTable) throw new Error("Topics table not initialized");
 
-  const results = await topicsTable.query().where(`id = '${id}'`).limit(1).toArray();
+  const results = await topicsTable.query().where(`id = ${sqlString(id)}`).limit(1).toArray();
   return results.length > 0 ? results[0] as unknown as Topic : null;
 }
 
 export async function getTopicByName(name: string): Promise<Topic | null> {
   if (!topicsTable) throw new Error("Topics table not initialized");
 
-  const results = await topicsTable.query().where(`name = '${name}'`).limit(1).toArray();
+  const results = await topicsTable.query().where(`name = ${sqlString(name)}`).limit(1).toArray();
   return results.length > 0 ? results[0] as unknown as Topic : null;
 }
 
@@ -471,7 +496,7 @@ export async function listTopics(filters: {
 export async function deleteTopic(id: string): Promise<boolean> {
   if (!topicsTable) throw new Error("Topics table not initialized");
 
-  await topicsTable.delete(`id = '${id}'`);
+  await topicsTable.delete(`id = ${sqlString(id)}`);
   return true;
 }
 
@@ -527,7 +552,7 @@ export async function updateMemory(id: string, updates: Partial<Omit<Memory, "id
 export async function getMemoryById(id: string): Promise<Memory | null> {
   if (!memoriesTable) throw new Error("Memories table not initialized");
 
-  const results = await memoriesTable.query().where(`id = '${id}'`).limit(1).toArray();
+  const results = await memoriesTable.query().where(`id = ${sqlString(id)}`).limit(1).toArray();
   return results.length > 0 ? results[0] as unknown as Memory : null;
 }
 
@@ -638,14 +663,14 @@ export async function searchMemoriesVector(
 export async function deleteMemory(id: string): Promise<boolean> {
   if (!memoriesTable) throw new Error("Memories table not initialized");
 
-  await memoriesTable.delete(`id = '${id}'`);
+  await memoriesTable.delete(`id = ${sqlString(id)}`);
   return true;
 }
 
 export async function getMemoriesBySupersedes(supersededId: string): Promise<Memory | null> {
   if (!memoriesTable) throw new Error("Memories table not initialized");
 
-  const results = await memoriesTable.query().where(`supersedes_id = '${supersededId}'`).limit(1).toArray();
+  const results = await memoriesTable.query().where(`supersedes_id = ${sqlString(supersededId)}`).limit(1).toArray();
   return results.length > 0 ? results[0] as unknown as Memory : null;
 }
 
@@ -709,7 +734,7 @@ export async function updateTodo(id: string, updates: Partial<Omit<Todo, "id" | 
 export async function getTodoById(id: string): Promise<Todo | null> {
   if (!todosTable) throw new Error("Todos table not initialized");
 
-  const results = await todosTable.query().where(`id = '${id}'`).limit(1).toArray();
+  const results = await todosTable.query().where(`id = ${sqlString(id)}`).limit(1).toArray();
   return results.length > 0 ? results[0] as unknown as Todo : null;
 }
 
@@ -768,7 +793,7 @@ export async function listTodos(filters: {
 export async function deleteTodo(id: string): Promise<boolean> {
   if (!todosTable) throw new Error("Todos table not initialized");
 
-  await todosTable.delete(`id = '${id}'`);
+  await todosTable.delete(`id = ${sqlString(id)}`);
   return true;
 }
 

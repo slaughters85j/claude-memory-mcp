@@ -18,7 +18,7 @@ export async function connectToLanceDB(databaseUrl, chunksTableName, catalogTabl
             console.error(`Opened RAG table: ${chunksTableName}`);
         }
         catch (error) {
-            console.error(`RAG table '${chunksTableName}' not found - RAG search disabled. Run 'npm run seed' to enable.`);
+            console.error(`RAG table "${chunksTableName}" not found - RAG search disabled. Run 'npm run seed' to enable.`);
         }
         try {
             catalogTable = await client.openTable(catalogTableName);
@@ -26,7 +26,7 @@ export async function connectToLanceDB(databaseUrl, chunksTableName, catalogTabl
             console.error(`Opened RAG table: ${catalogTableName}`);
         }
         catch (error) {
-            console.error(`RAG table '${catalogTableName}' not found - catalog search disabled. Run 'npm run seed' to enable.`);
+            console.error(`RAG table "${catalogTableName}" not found - catalog search disabled. Run 'npm run seed' to enable.`);
         }
     }
     catch (error) {
