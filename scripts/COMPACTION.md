@@ -1,0 +1,52 @@
+# Compacting the memory store
+
+`scripts/compact-db.sh` reduces LanceDB fragmentation (`optimize()`) and prunes
+old version history (`cleanup_old_versions()`). Both are irreversible, so run it
+with the memory servers stopped and let it take its pre-run backup.
+
+## Why the servers must be stopped
+
+The store is written by `node dist/index.js … memory-db` processes launched by
+Claude Desktop (and by each Claude Code session). Compacting while they write can
+conflict, and the store lives in iCloud Drive, so a mid-sync rewrite is risky.
+Those servers run *under* Claude Desktop — including the one serving an active
+Claude Code chat — so the app itself must be quit; a chat cannot stop its own
+server from inside itself.
+
+## Procedure
+
+1. Quit Claude Desktop entirely (⌘Q). This stops every memory server.
+2. Confirm none remain (should print nothing):
+
+   ```
+   pgrep -fl "dist/index.js.*memory-db"
+   ```
+
+3. Run the compaction from Terminal:
+
+   ```
+   cd "/Users/system-backup/Library/Mobile Documents/com~apple~CloudDocs/Claude.AI Persistent Memory/claude-memory-mcp"
+   scripts/compact-db.sh --dry-run   # optional: preview row/version counts
+   scripts/compact-db.sh             # answer y at the live-store prompt
+   ```
+
+4. Reopen Claude Desktop.
+
+## What it does
+
+- Backs up to `~/Backups/claude-memory/precompact-<UTC-timestamp>.tar.gz` first.
+- Runs `optimize()` on each table, then `cleanup_old_versions(older_than=7 days)`.
+- Reads each table back to prove it still opens under the pinned 0.15 reader.
+
+Expected result: `topics` collapses from ~1,600 versions to a handful, and the
+28M store shrinks noticeably.
+
+## If something looks wrong
+
+Restore from the pre-run tarball:
+
+```
+cd "/Users/system-backup/Library/Mobile Documents/com~apple~CloudDocs/Claude.AI Persistent Memory"
+mv memory-db memory-db.broken
+tar -xzf ~/Backups/claude-memory/precompact-<timestamp>.tar.gz
+```
