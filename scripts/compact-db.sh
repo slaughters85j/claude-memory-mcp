@@ -88,8 +88,10 @@ if [[ "$DB_ABS" == "$LIVE_ABS" && "$DRY_RUN" != 1 && "$FORCE" != 1 ]]; then
   confirm "Compact the live store?" || { echo "Aborted."; exit 1; }
 fi
 
-### Warn if a memory server is holding the store open.
-if command -v pgrep >/dev/null 2>&1 && pgrep -fl "claude-memory-mcp" >/dev/null 2>&1; then
+### Warn if a memory server is holding the store open. Match the actual DB
+### server invocation (node dist/index.js … memory-db), not editors/IDEs whose
+### window happens to be labelled "claude-memory-mcp".
+if command -v pgrep >/dev/null 2>&1 && pgrep -fl "dist/index.js.*memory-db" >/dev/null 2>&1; then
   echo "WARNING: a claude-memory-mcp process is running; compacting a live store risks write conflicts."
   [[ "$DRY_RUN" == 1 ]] || confirm "Continue with writers live?" || { echo "Aborted."; exit 1; }
 fi
