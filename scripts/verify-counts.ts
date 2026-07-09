@@ -34,8 +34,12 @@ import {
   getStaleTopics,
   getTodoCountsByPriority,
   initializeMemoryTables,
+  listMemories,
+  listTodos,
+  listTopics,
   memoriesTable,
   scanAll,
+  searchMemoriesVector,
   sqlString,
   todosTable,
   topicsTable,
@@ -372,6 +376,57 @@ async function runChecks(): Promise<void> {
   const none = await scanAll<Todo>(todosTable!, "status = 'open' AND title = 'no-such-title'");
   check("returns an empty array when nothing matches", () => {
     assert.deepEqual(none, []);
+  });
+
+  // ==========================================================================
+  // List/search functions: predicates pushed into SQL. The old code fetched
+  // limit*2 rows and filtered in JavaScript, so any of these above the implicit
+  // ten-row limit would have truncated. limit is set well above the fixtures so
+  // that a correct implementation returns every match.
+  // ==========================================================================
+
+  console.log("\nlistTodos (predicates in SQL, no implicit ceiling)");
+  const openList = await listTodos({ status_filter: ["open"], limit: 100 });
+  check(`returns all ${OPEN_TOTAL} open todos, not a truncated page`, () => {
+    assert.equal(openList.length, OPEN_TOTAL);
+    assert.ok(openList.length > LANCEDB_IMPLICIT_LIMIT);
+    assert.ok(openList.every((t) => t.status === "open"));
+    assert.ok(openList.every((t) => !t.tags.includes("_system")));
+  });
+  const taggedOpen = await listTodos({ status_filter: ["open"], tag_filter: ["seed"], limit: 100 });
+  check(`tag_filter runs in SQL: ${TAGGED_OPEN_TOTAL} tagged, dropping the ${EMPTY_TAG_OPEN_TODOS} untagged`, () => {
+    assert.equal(taggedOpen.length, TAGGED_OPEN_TOTAL);
+    assert.ok(taggedOpen.every((t) => t.tags.includes("seed")));
+  });
+
+  console.log("\nlistMemories (since window in SQL)");
+  const recentMemories = await listMemories({ since: daysAgo(RECENT_WINDOW_DAYS), limit: 100 });
+  const expectedRecentMemories =
+    MEMORIES_ADDED_RECENTLY + EMPTY_TAG_MEMORIES + MEMORIES_UPDATED_RECENTLY;
+  check(`returns all ${expectedRecentMemories} recently-updated memories`, () => {
+    assert.equal(recentMemories.length, expectedRecentMemories);
+    assert.ok(recentMemories.length > LANCEDB_IMPLICIT_LIMIT);
+    assert.ok(recentMemories.every((m) => !m.tags.includes("_system")));
+  });
+
+  console.log("\nlistTopics (name_search in SQL)");
+  const seededTopics =
+    2 + OTHER_RECENT_TOPICS + STALE_ACTIVE_TOPICS + STALE_ARCHIVED_TOPICS + EMPTY_TAG_STALE_TOPICS;
+  const named = await listTopics({ name_search: "topic", limit: 100 });
+  check(`contains() matches all ${seededTopics} seeded topics, none truncated`, () => {
+    assert.equal(named.length, seededTopics);
+    assert.ok(named.length > LANCEDB_IMPLICIT_LIMIT);
+    assert.ok(named.every((t) => !t.tags.includes("_system")));
+  });
+
+  console.log("\nsearchMemoriesVector (prefilter, no under-return)");
+  const nearAll = await searchMemoriesVector(zeroVector(), { topic_id: TOPIC_A_ID }, 100);
+  const nearFew = await searchMemoriesVector(zeroVector(), { topic_id: TOPIC_A_ID }, 5);
+  check(`prefilter returns all ${TOPIC_A_MEMORIES} matches; limit caps among matches`, () => {
+    assert.equal(nearAll.length, TOPIC_A_MEMORIES);
+    assert.equal(nearFew.length, 5);
+    assert.ok(nearAll.every((m) => m.topic_id === TOPIC_A_ID));
+    assert.ok(nearAll.every((m) => !m.tags.includes("_system")));
   });
 }
 

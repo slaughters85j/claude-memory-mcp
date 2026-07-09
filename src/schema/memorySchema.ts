@@ -167,6 +167,39 @@ export async function scanAll<T>(table: lancedb.Table, filter: string): Promise<
   return rows as unknown as T[];
 }
 
+/**
+ * `column IN ('a', 'b', ...)` with every value escaped. Used for status,
+ * priority, kind and topic-id membership tests pushed into SQL.
+ */
+export function inListSQL(column: string, values: readonly string[]): string {
+  return `${column} IN (${values.map(sqlString).join(", ")})`;
+}
+
+/**
+ * Conjunction of `array_has` clauses requiring every tag to be present — the
+ * SQL equivalent of `tags.every(t => row.tags.includes(t))`, so tag filtering
+ * runs in the engine instead of over an already-truncated page of rows.
+ */
+export function requireAllTagsSQL(tags: readonly string[]): string {
+  return tags.map((tag) => `array_has(tags, ${sqlString(tag)})`).join(" AND ");
+}
+
+/**
+ * Drop rows whose id was already seen. The delete+add update pattern can
+ * transiently surface an old and a new copy of the same row; this collapses
+ * them. It is the only post-fetch reducer left on the list queries now that
+ * all predicates are pushed into SQL, so it can no longer cause the wholesale
+ * under-return the old "fetch limit*2, then filter" pattern did.
+ */
+export function dedupById<T extends { id: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((row) => {
+    if (seen.has(row.id)) return false;
+    seen.add(row.id);
+    return true;
+  });
+}
+
 // Priority ordering for sorting
 export const PRIORITY_ORDER: Record<TodoPriority, number> = {
   urgent: 0,
@@ -353,56 +386,39 @@ export async function listTopics(filters: {
 }): Promise<Topic[]> {
   if (!topicsTable) throw new Error("Topics table not initialized");
 
-  let query = topicsTable.query();
+  const limit = filters.limit ?? 20;
 
-  // Build WHERE conditions
-  const conditions: string[] = [];
+  // Every predicate is pushed into SQL so `.limit(limit)` is applied after
+  // filtering, not before. The old code fetched limit*2 rows and filtered in
+  // JavaScript, which under-returned whenever the residual filters rejected
+  // more than half the page.
+  const conditions: string[] = [EXCLUDE_SYSTEM_ROWS];
 
   if (filters.status_filter && filters.status_filter.length > 0) {
-    const statusList = filters.status_filter.map(s => `'${s}'`).join(", ");
-    conditions.push(`status IN (${statusList})`);
+    conditions.push(inListSQL("status", filters.status_filter));
   }
 
   if (filters.min_importance !== undefined) {
     conditions.push(`importance >= ${filters.min_importance}`);
   }
 
-  // Apply conditions
-  if (conditions.length > 0) {
-    query = query.where(conditions.join(" AND "));
-  }
-
-  const limit = filters.limit ?? 20;
-  let results = await query.limit(limit * 2).toArray(); // Get more to filter
-
-  // Client-side filtering for complex conditions
-  let topics = results as unknown as Topic[];
-
-  // Filter by name search
-  if (filters.name_search) {
-    const search = filters.name_search.toLowerCase();
-    topics = topics.filter(t => t.name.toLowerCase().includes(search));
-  }
-
-  // Filter by tags (AND logic)
   if (filters.tag_filter && filters.tag_filter.length > 0) {
-    topics = topics.filter(t =>
-      filters.tag_filter!.every(tag => t.tags.includes(tag))
-    );
+    conditions.push(requireAllTagsSQL(filters.tag_filter));
   }
 
-  // Filter out system records
-  topics = topics.filter(t => !t.tags.includes("_system"));
+  if (filters.name_search) {
+    // contains(lower(name), literal) reproduces name.toLowerCase().includes()
+    // exactly; the literal carries no LIKE wildcards, so quote-escaping suffices.
+    conditions.push(`contains(lower(name), ${sqlString(filters.name_search.toLowerCase())})`);
+  }
 
-  // Deduplicate by ID (can happen due to delete+add update pattern)
-  const seen = new Set<string>();
-  topics = topics.filter(t => {
-    if (seen.has(t.id)) return false;
-    seen.add(t.id);
-    return true;
-  });
+  const rows = await topicsTable
+    .query()
+    .where(conditions.join(" AND "))
+    .limit(limit)
+    .toArray();
 
-  return topics.slice(0, limit);
+  return dedupById(rows as unknown as Topic[]);
 }
 
 export async function deleteTopic(id: string): Promise<boolean> {
@@ -483,61 +499,44 @@ export async function listMemories(filters: {
 }): Promise<Memory[]> {
   if (!memoriesTable) throw new Error("Memories table not initialized");
 
-  let query = memoriesTable.query();
-  const conditions: string[] = [];
+  const limit = filters.limit ?? 20;
+  const conditions: string[] = [EXCLUDE_SYSTEM_ROWS];
 
   if (filters.topic_id) {
-    conditions.push(`topic_id = '${filters.topic_id}'`);
+    conditions.push(`topic_id = ${sqlString(filters.topic_id)}`);
+  }
+
+  if (filters.topic_ids && filters.topic_ids.length > 0) {
+    conditions.push(inListSQL("topic_id", filters.topic_ids));
   }
 
   if (filters.kind_filter && filters.kind_filter.length > 0) {
-    const kindList = filters.kind_filter.map(k => `'${k}'`).join(", ");
-    conditions.push(`kind IN (${kindList})`);
+    conditions.push(inListSQL("kind", filters.kind_filter));
   }
 
   if (filters.min_importance !== undefined) {
     conditions.push(`importance >= ${filters.min_importance}`);
   }
 
-  if (conditions.length > 0) {
-    query = query.where(conditions.join(" AND "));
-  }
-
-  const limit = filters.limit ?? 20;
-  let results = await query.limit(limit * 2).toArray();
-  let memories = results as unknown as Memory[];
-
-  // Client-side filtering
-  if (filters.topic_ids && filters.topic_ids.length > 0) {
-    memories = memories.filter(m => m.topic_id && filters.topic_ids!.includes(m.topic_id));
-  }
-
   if (filters.tag_filter && filters.tag_filter.length > 0) {
-    memories = memories.filter(m =>
-      filters.tag_filter!.every(tag => m.tags.includes(tag))
-    );
+    conditions.push(requireAllTagsSQL(filters.tag_filter));
   }
 
   if (filters.since) {
-    memories = memories.filter(m => m.updated_at >= filters.since!);
+    conditions.push(`updated_at >= ${sqlString(filters.since)}`);
   }
 
   if (filters.until) {
-    memories = memories.filter(m => m.updated_at <= filters.until!);
+    conditions.push(`updated_at <= ${sqlString(filters.until)}`);
   }
 
-  // Filter out system records
-  memories = memories.filter(m => !m.tags.includes("_system"));
+  const rows = await memoriesTable
+    .query()
+    .where(conditions.join(" AND "))
+    .limit(limit)
+    .toArray();
 
-  // Deduplicate by ID
-  const seen = new Set<string>();
-  memories = memories.filter(m => {
-    if (seen.has(m.id)) return false;
-    seen.add(m.id);
-    return true;
-  });
-
-  return memories.slice(0, limit);
+  return dedupById(rows as unknown as Memory[]);
 }
 
 export async function searchMemoriesVector(
@@ -554,49 +553,42 @@ export async function searchMemoriesVector(
 ): Promise<Array<Memory & { _distance: number }>> {
   if (!memoriesTable) throw new Error("Memories table not initialized");
 
-  let query = memoriesTable.vectorSearch(queryVector);
-
-  const conditions: string[] = [];
+  const conditions: string[] = [EXCLUDE_SYSTEM_ROWS];
 
   if (filters.topic_id) {
-    conditions.push(`topic_id = '${filters.topic_id}'`);
+    conditions.push(`topic_id = ${sqlString(filters.topic_id)}`);
+  }
+
+  if (filters.topic_ids && filters.topic_ids.length > 0) {
+    conditions.push(inListSQL("topic_id", filters.topic_ids));
   }
 
   if (filters.kind_filter && filters.kind_filter.length > 0) {
-    const kindList = filters.kind_filter.map(k => `'${k}'`).join(", ");
-    conditions.push(`kind IN (${kindList})`);
+    conditions.push(inListSQL("kind", filters.kind_filter));
   }
 
   if (filters.min_importance !== undefined) {
     conditions.push(`importance >= ${filters.min_importance}`);
   }
 
-  if (conditions.length > 0) {
-    query = query.where(conditions.join(" AND "));
-  }
-
-  let results = await query.limit(limit * 2).toArray();
-  let memories = results as unknown as Array<Memory & { _distance: number }>;
-
-  // Client-side filtering
-  if (filters.topic_ids && filters.topic_ids.length > 0) {
-    memories = memories.filter(m => m.topic_id && filters.topic_ids!.includes(m.topic_id));
-  }
-
   if (filters.tag_filter && filters.tag_filter.length > 0) {
-    memories = memories.filter(m =>
-      filters.tag_filter!.every(tag => m.tags.includes(tag))
-    );
+    conditions.push(requireAllTagsSQL(filters.tag_filter));
   }
 
   if (filters.since) {
-    memories = memories.filter(m => m.updated_at >= filters.since!);
+    conditions.push(`updated_at >= ${sqlString(filters.since)}`);
   }
 
-  // Filter out system records
-  memories = memories.filter(m => !m.tags.includes("_system"));
+  // LanceDB filters vector searches as a prefilter by default, so `.limit(limit)`
+  // returns the limit nearest rows *among matches* rather than filtering an
+  // already-truncated set of nearest neighbours down to fewer than limit.
+  const rows = await memoriesTable
+    .vectorSearch(queryVector)
+    .where(conditions.join(" AND "))
+    .limit(limit)
+    .toArray();
 
-  return memories.slice(0, limit);
+  return dedupById(rows as unknown as Array<Memory & { _distance: number }>);
 }
 
 export async function deleteMemory(id: string): Promise<boolean> {
@@ -690,63 +682,45 @@ export async function listTodos(filters: {
 }): Promise<Todo[]> {
   if (!todosTable) throw new Error("Todos table not initialized");
 
-  let query = todosTable.query();
-  const conditions: string[] = [];
+  const limit = filters.limit ?? 20;
+  const conditions: string[] = [EXCLUDE_SYSTEM_ROWS];
 
   if (filters.topic_id) {
-    conditions.push(`topic_id = '${filters.topic_id}'`);
+    conditions.push(`topic_id = ${sqlString(filters.topic_id)}`);
   }
 
   if (filters.memory_id) {
-    conditions.push(`memory_id = '${filters.memory_id}'`);
+    conditions.push(`memory_id = ${sqlString(filters.memory_id)}`);
   }
 
   if (filters.status_filter && filters.status_filter.length > 0) {
-    const statusList = filters.status_filter.map(s => `'${s}'`).join(", ");
-    conditions.push(`status IN (${statusList})`);
+    conditions.push(inListSQL("status", filters.status_filter));
   }
 
   if (filters.priority_filter && filters.priority_filter.length > 0) {
-    const priorityList = filters.priority_filter.map(p => `'${p}'`).join(", ");
-    conditions.push(`priority IN (${priorityList})`);
-  }
-
-  if (conditions.length > 0) {
-    query = query.where(conditions.join(" AND "));
-  }
-
-  const limit = filters.limit ?? 20;
-  let results = await query.limit(limit * 2).toArray();
-  let todos = results as unknown as Todo[];
-
-  // Client-side filtering
-  if (filters.tag_filter && filters.tag_filter.length > 0) {
-    todos = todos.filter(t =>
-      filters.tag_filter!.every(tag => t.tags.includes(tag))
-    );
+    conditions.push(inListSQL("priority", filters.priority_filter));
   }
 
   if (filters.overdue_only) {
-    const now = nowISO();
-    todos = todos.filter(t =>
-      t.due_at &&
-      t.due_at < now &&
-      (t.status === "open" || t.status === "in_progress" || t.status === "blocked")
+    // A null due_at yields `null < ...` = NULL and is excluded, matching the old
+    // `t.due_at && t.due_at < now` guard.
+    conditions.push(
+      `due_at < ${sqlString(nowISO())} ` +
+        `AND status IN ('open', 'in_progress', 'blocked')`,
     );
   }
 
-  // Filter out system records
-  todos = todos.filter(t => !t.tags.includes("_system"));
+  if (filters.tag_filter && filters.tag_filter.length > 0) {
+    conditions.push(requireAllTagsSQL(filters.tag_filter));
+  }
 
-  // Deduplicate by ID
-  const seen = new Set<string>();
-  todos = todos.filter(t => {
-    if (seen.has(t.id)) return false;
-    seen.add(t.id);
-    return true;
-  });
+  const rows = await todosTable
+    .query()
+    .where(conditions.join(" AND "))
+    .limit(limit)
+    .toArray();
 
-  return todos.slice(0, limit);
+  return dedupById(rows as unknown as Todo[]);
 }
 
 export async function deleteTodo(id: string): Promise<boolean> {

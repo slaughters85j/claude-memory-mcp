@@ -113,6 +113,27 @@ export declare const EXCLUDE_SYSTEM_ROWS = "array_has(tags, '_system') IS NOT TR
  * that many rows keeps the scan bounded without inventing an arbitrary maximum.
  */
 export declare function scanAll<T>(table: lancedb.Table, filter: string): Promise<T[]>;
+/**
+ * `column IN ('a', 'b', ...)` with every value escaped. Used for status,
+ * priority, kind and topic-id membership tests pushed into SQL.
+ */
+export declare function inListSQL(column: string, values: readonly string[]): string;
+/**
+ * Conjunction of `array_has` clauses requiring every tag to be present — the
+ * SQL equivalent of `tags.every(t => row.tags.includes(t))`, so tag filtering
+ * runs in the engine instead of over an already-truncated page of rows.
+ */
+export declare function requireAllTagsSQL(tags: readonly string[]): string;
+/**
+ * Drop rows whose id was already seen. The delete+add update pattern can
+ * transiently surface an old and a new copy of the same row; this collapses
+ * them. It is the only post-fetch reducer left on the list queries now that
+ * all predicates are pushed into SQL, so it can no longer cause the wholesale
+ * under-return the old "fetch limit*2, then filter" pattern did.
+ */
+export declare function dedupById<T extends {
+    id: string;
+}>(rows: T[]): T[];
 export declare const PRIORITY_ORDER: Record<TodoPriority, number>;
 /** Strip the vector field from a single Todo */
 export declare function stripTodoVector(todo: Todo): Omit<Todo, 'vector'>;
