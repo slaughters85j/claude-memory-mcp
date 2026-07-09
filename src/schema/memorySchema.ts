@@ -145,6 +145,20 @@ export function sqlStringList(values: readonly string[]): string {
 }
 
 /**
+ * A validated numeric SQL literal. A number has no quoting to escape, so instead
+ * of interpolating it we reject anything that is not a finite number outright.
+ * MCP tool arguments are untyped at runtime, so a caller passing the string
+ * "0 OR 1=1" for a numeric filter would otherwise inject arbitrary SQL into a
+ * comparison — the escaping guard cannot see an unquoted interpolation.
+ */
+export function sqlNumber(value: number): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Expected a finite number for a SQL numeric literal, got ${JSON.stringify(value)}`);
+  }
+  return String(value);
+}
+
+/**
  * Predicate fragment excluding the `_system` sentinel rows that
  * initializeMemoryTables writes for schema inference. Pushed into SQL so the
  * query engine applies it, rather than a JavaScript filter running over an
@@ -471,7 +485,7 @@ export async function listTopics(filters: {
   }
 
   if (filters.min_importance !== undefined) {
-    conditions.push(`importance >= ${filters.min_importance}`);
+    conditions.push(`importance >= ${sqlNumber(filters.min_importance)}`);
   }
 
   if (filters.tag_filter && filters.tag_filter.length > 0) {
@@ -584,7 +598,7 @@ export async function listMemories(filters: {
   }
 
   if (filters.min_importance !== undefined) {
-    conditions.push(`importance >= ${filters.min_importance}`);
+    conditions.push(`importance >= ${sqlNumber(filters.min_importance)}`);
   }
 
   if (filters.tag_filter && filters.tag_filter.length > 0) {
@@ -637,7 +651,7 @@ export async function searchMemoriesVector(
   }
 
   if (filters.min_importance !== undefined) {
-    conditions.push(`importance >= ${filters.min_importance}`);
+    conditions.push(`importance >= ${sqlNumber(filters.min_importance)}`);
   }
 
   if (filters.tag_filter && filters.tag_filter.length > 0) {

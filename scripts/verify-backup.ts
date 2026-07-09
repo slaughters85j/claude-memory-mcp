@@ -130,6 +130,26 @@ async function main(): Promise<void> {
     }
   });
 
+  // The overwrite guard must protect the tarball's real directory, not the
+  // untrusted manifest.source (which the sha256 does not cover).
+  const guardTo = tmp("bk-guard-");
+  fs.mkdirSync(path.join(guardTo, "memory-db", "topics.lance"), { recursive: true }); // a DB already here
+  const decoyTarball = path.join(dest, "decoy.tar.gz");
+  fs.copyFileSync(result!.tarball, decoyTarball); // same bytes -> same sha256
+  const decoyManifest = JSON.parse(fs.readFileSync(result!.manifest, "utf8"));
+  decoyManifest.source = "/nonexistent/decoy-name"; // tamper the field the sha256 ignores
+  fs.writeFileSync(decoyTarball.replace(/\.tar\.gz$/, ".manifest.json"), JSON.stringify(decoyManifest));
+  let overwriteError: Error | null = null;
+  try {
+    await restoreDatabase({ from: decoyTarball, to: guardTo, force: false });
+  } catch (error) {
+    overwriteError = error as Error;
+  }
+  check("restore guards the tarball's real directory, not manifest.source", () => {
+    assert.ok(overwriteError, "expected the overwrite guard to fire");
+    assert.match(overwriteError!.message, /already contains a .lance database/);
+  });
+
   // iCloud destination guard.
   let guardError: Error | null = null;
   try {

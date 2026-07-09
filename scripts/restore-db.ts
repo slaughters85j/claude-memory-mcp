@@ -36,7 +36,15 @@ export async function restoreDatabase(opts: {
     throw new Error(`Checksum mismatch: tarball ${actualSha} != manifest ${manifest.sha256}. Refusing to restore a corrupted archive.`);
   }
 
-  const dbName = path.basename(manifest.source);
+  // Derive the extracted directory from the tarball itself, not the untrusted
+  // manifest.source (which the sha256 does not cover): the top-level directory is
+  // the first path component of every member, and there must be exactly one.
+  const members = execFileSync("tar", ["-tzf", from]).toString().split("\n").filter(Boolean);
+  const topLevel = new Set(members.map((m) => m.split("/")[0]));
+  if (topLevel.size !== 1) {
+    throw new Error(`Archive has ${topLevel.size} top-level entries; expected exactly one database directory.`);
+  }
+  const dbName = [...topLevel][0];
   const restoredDb = path.join(to, dbName);
 
   for (const target of [to, restoredDb]) {

@@ -31,7 +31,7 @@ export const MIN_RETAINED_BACKUPS = 7;
 export const FREE_SPACE_MULTIPLIER = 5;
 export const VERIFY_RETRY_ATTEMPTS = 2;
 
-/** Copy fragments before the manifest that references them (see copyTable). */
+/** Fragment directories, copied after the manifests (see copyTable). */
 const TABLE_COPY_ORDER = ["data", "_deletions", "_transactions"];
 const MANIFEST_DIR = "_versions";
 /** Rows carrying the schema-inference sentinel. Constant, not interpolated. */
@@ -85,10 +85,20 @@ export function isInsideICloud(target: string): boolean {
 
 function dirSizeBytes(target: string): number {
   let total = 0;
-  for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(target, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
     const full = path.join(target, entry.name);
-    if (entry.isDirectory()) total += dirSizeBytes(full);
-    else if (entry.isFile()) total += fs.statSync(full).size;
+    try {
+      if (entry.isDirectory()) total += dirSizeBytes(full);
+      else if (entry.isFile()) total += fs.statSync(full).size;
+    } catch {
+      // Entry vanished between readdir and stat (a concurrent writer); count 0.
+    }
   }
   return total;
 }
@@ -117,18 +127,23 @@ function gitHead(): string {
   }
 }
 
-/** Copy a `<table>.lance` directory fragments-first, manifests last. */
+/** Copy a `<table>.lance` directory manifests-first, fragments after. */
 function copyTable(srcLance: string, dstLance: string): void {
   fs.mkdirSync(dstLance, { recursive: true });
   const entries = fs.readdirSync(srcLance);
-  // Lance writes data fragments before the manifest (_versions) that references
-  // them. Copying fragments first and manifests LAST guarantees every manifest
-  // present in the copy has its fragments present — the entire correctness
-  // argument for taking a hot copy without stopping the concurrent writers.
+  // Copy the manifests (_versions) FIRST — this pins the copy to a version vK —
+  // then the fragment directories (data/_deletions/_transactions). Concurrent
+  // writers only APPEND (compaction, which deletes fragments, is locked out by
+  // the maintenance lock), so the fragment dirs read afterwards are a superset of
+  // what vK references: every fragment vK points to is guaranteed present. This
+  // is the correctness argument for a hot copy taken without stopping the
+  // writers. (Copying manifests LAST would instead capture the newest manifest,
+  // which references the newest fragments — some written after the fragment dirs
+  // were read — a dangling copy. verify+retry is the backstop, not the guarantee.)
   const ordered = [
+    ...(entries.includes(MANIFEST_DIR) ? [MANIFEST_DIR] : []),
     ...TABLE_COPY_ORDER.filter((d) => entries.includes(d)),
     ...entries.filter((e) => !TABLE_COPY_ORDER.includes(e) && e !== MANIFEST_DIR),
-    ...(entries.includes(MANIFEST_DIR) ? [MANIFEST_DIR] : []),
   ];
   for (const name of ordered) {
     fs.cpSync(path.join(srcLance, name), path.join(dstLance, name), { recursive: true });
@@ -260,7 +275,7 @@ export async function backupDatabase(opts: {
   }
 
   // Step 3: point-in-time reference for verification.
-  const state = await snapshotDatabase(source);
+  let state = await snapshotDatabase(source);
   const tablesSummary = Object.entries(state)
     .map(([n, s]) => `${n}=${s.count}@v${s.version}`)
     .join(" ");
@@ -294,8 +309,9 @@ export async function backupDatabase(opts: {
     } catch (error) {
       console.error(`  verification failed (attempt ${attempt + 1}/${VERIFY_RETRY_ATTEMPTS}): ${(error as Error).message}`);
       fs.rmSync(staging, { recursive: true, force: true });
-      // A row legitimately deleted mid-copy is the only benign cause; re-snapshot.
-      Object.assign(state, await snapshotDatabase(source));
+      // A row legitimately deleted mid-copy is the only benign cause; re-snapshot
+      // fully (replace, not merge — a table dropped mid-run must not linger).
+      state = await snapshotDatabase(source);
     }
   }
   if (!verified) {
@@ -349,6 +365,7 @@ function warnIfNoHardwareBackup(): void {
 }
 
 function acquireLock(): void {
+  const nonce = `${process.pid}-${process.hrtime.bigint()}`;
   try {
     fs.mkdirSync(LOCK_DIR);
   } catch (error) {
@@ -361,7 +378,14 @@ function acquireLock(): void {
     fs.rmSync(LOCK_DIR, { recursive: true, force: true });
     fs.mkdirSync(LOCK_DIR);
   }
-  fs.writeFileSync(path.join(LOCK_DIR, "owner"), `backup-db pid ${process.pid}\n`);
+  // Write a unique token then read it back: if two processes both stole the same
+  // stale lock, the last writer wins and the loser sees a foreign token and backs
+  // off, so only one ever proceeds.
+  const ownerFile = path.join(LOCK_DIR, "owner");
+  fs.writeFileSync(ownerFile, `backup-db ${nonce}\n`);
+  if (!fs.readFileSync(ownerFile, "utf8").includes(nonce)) {
+    throw new Error("Lost a race for the maintenance lock; try again.");
+  }
 }
 
 function releaseLock(): void {

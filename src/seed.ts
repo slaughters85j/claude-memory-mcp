@@ -1,5 +1,6 @@
 import * as lancedb from "@lancedb/lancedb";
 import minimist from 'minimist';
+import { sqlString } from "./schema/memorySchema.js";
 import {
   RecursiveCharacterTextSplitter
 } from 'langchain/text_splitter';
@@ -61,7 +62,7 @@ async function generateContentOverview(rawDocs: any, model: BaseLanguageModelInt
 }
 
 async function catalogRecordExists(catalogTable: lancedb.Table, hash: string): Promise<boolean> {
-  const query = catalogTable.query().where(`hash="${hash}"`).limit(1);
+  const query = catalogTable.query().where(`hash = ${sqlString(hash)}`).limit(1);
   const results = await query.toArray();
   return results.length > 0;
 }
@@ -124,14 +125,14 @@ async function seed() {
     try {
         catalogTable = await db.openTable(defaults.CATALOG_TABLE_NAME);
     } catch (e) {
-        console.error(`Looks like the catalog table "${defaults.CATALOG_TABLE_NAME}" doesn't exist. We'll create it later.`);
+        console.error(`Looks like the catalog table ${defaults.CATALOG_TABLE_NAME} doesn't exist. We'll create it later.`);
         catalogTableExists = false;
     }
 
     try {
         chunksTable = await db.openTable(defaults.CHUNKS_TABLE_NAME);
     } catch (e) {
-        console.error(`Looks like the chunks table "${defaults.CHUNKS_TABLE_NAME}" doesn't exist. We'll create it later.`);
+        console.error(`Looks like the chunks table ${defaults.CHUNKS_TABLE_NAME} doesn't exist. We'll create it later.`);
     }
 
     // try dropping the tables if we need to overwrite

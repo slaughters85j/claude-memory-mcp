@@ -22,7 +22,7 @@ export async function connectToLanceDB(databaseUrl: string, chunksTableName: str
       chunksVectorStore = new LanceDB(new OllamaEmbeddings({model: defaults.EMBEDDING_MODEL}), { table: chunksTable })
       console.error(`Opened RAG table: ${chunksTableName}`);
     } catch (error) {
-      console.error(`RAG table "${chunksTableName}" not found - RAG search disabled. Run 'npm run seed' to enable.`);
+      console.error(`RAG table ${chunksTableName} not found - RAG search disabled. Run 'npm run seed' to enable.`);
     }
 
     try {
@@ -30,7 +30,7 @@ export async function connectToLanceDB(databaseUrl: string, chunksTableName: str
       catalogVectorStore = new LanceDB(new OllamaEmbeddings({model: defaults.EMBEDDING_MODEL}), { table: catalogTable })
       console.error(`Opened RAG table: ${catalogTableName}`);
     } catch (error) {
-      console.error(`RAG table "${catalogTableName}" not found - catalog search disabled. Run 'npm run seed' to enable.`);
+      console.error(`RAG table ${catalogTableName} not found - catalog search disabled. Run 'npm run seed' to enable.`);
     }
 
   } catch (error) {

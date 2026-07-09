@@ -154,6 +154,19 @@ async function task1(): Promise<void> {
     assert.equal(fixtureViolations[0].line, 1);
   });
   fs.rmSync(fixtureDir, { recursive: true, force: true });
+
+  console.log("\nTask 1: numeric filter is validated, not interpolated");
+  let injectionError: Error | null = null;
+  try {
+    // MCP args are untyped at runtime; a string here used to inject raw SQL.
+    await listTopics({ min_importance: "0 OR 1=1" as unknown as number });
+  } catch (error) {
+    injectionError = error as Error;
+  }
+  check("min_importance rejects a non-numeric (injection) value via sqlNumber", () => {
+    assert.ok(injectionError, "expected sqlNumber to reject a non-number");
+    assert.match(injectionError!.message, /finite number/);
+  });
 }
 
 // ============================================================================

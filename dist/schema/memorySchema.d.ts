@@ -95,6 +95,14 @@ export declare function sqlString(value: string): string;
  */
 export declare function sqlStringList(values: readonly string[]): string;
 /**
+ * A validated numeric SQL literal. A number has no quoting to escape, so instead
+ * of interpolating it we reject anything that is not a finite number outright.
+ * MCP tool arguments are untyped at runtime, so a caller passing the string
+ * "0 OR 1=1" for a numeric filter would otherwise inject arbitrary SQL into a
+ * comparison — the escaping guard cannot see an unquoted interpolation.
+ */
+export declare function sqlNumber(value: number): string;
+/**
  * Predicate fragment excluding the `_system` sentinel rows that
  * initializeMemoryTables writes for schema inference. Pushed into SQL so the
  * query engine applies it, rather than a JavaScript filter running over an

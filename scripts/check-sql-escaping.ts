@@ -2,10 +2,16 @@
  * Build gate: no value may be spliced directly into a SQL string. Every
  * interpolated value must go through sqlString()/sqlStringList().
  *
- * Scans every .ts file under src/ for the raw-interpolation signature — a single
- * quote immediately followed by a `${...}` template substitution — and fails
- * unless the line opts out with a trailing `// sql-escape-allowed`. Exactly one
- * line is expected to carry that annotation: the body of sqlString() itself.
+ * Scans every .ts file under src/ for the raw-interpolation signature — a quote
+ * (single or double) immediately followed by a `${...}` template substitution —
+ * and fails unless the line opts out with a trailing `// sql-escape-allowed`.
+ * Exactly one line is expected to carry that annotation: the body of sqlString().
+ *
+ * This is a REGRESSION GATE for the common idiom, not a complete security
+ * boundary: it cannot see string concatenation, an unquoted numeric hole, or a
+ * template split across lines. Runtime safety comes from sqlString()/
+ * sqlStringList()/sqlNumber() escaping-or-validating at the SQL boundary; this
+ * gate just stops the easy raw-quote reflex from creeping back in.
  *
  *   npx tsx scripts/check-sql-escaping.ts        # exits non-zero on violation
  */
@@ -13,8 +19,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-/** A single quote directly followed by a template substitution: `'` + `${`. */
-const RAW_INTERPOLATION = "'" + "${";
+/** A quote (single or double) directly followed by a `${...}` substitution. */
+const RAW_INTERPOLATION = /['"]\$\{/;
 const ALLOW_ANNOTATION = "// sql-escape-allowed";
 
 export interface EscapeViolation {
@@ -44,7 +50,7 @@ export function findSqlEscapeViolations(root: string): EscapeViolation[] {
     fs.readFileSync(file, "utf8")
       .split("\n")
       .forEach((text, index) => {
-        if (text.includes(RAW_INTERPOLATION) && !text.includes(ALLOW_ANNOTATION)) {
+        if (RAW_INTERPOLATION.test(text) && !text.includes(ALLOW_ANNOTATION)) {
           violations.push({ file, line: index + 1, text: text.trim() });
         }
       });
