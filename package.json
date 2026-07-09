@@ -23,7 +23,10 @@
     "check:sql": "tsx scripts/check-sql-escaping.ts",
     "verify:counts": "tsx scripts/verify-counts.ts",
     "verify:hardening": "tsx scripts/verify-hardening.ts",
-    "test": "npm run typecheck && npm run check:sql && npm run verify:counts && npm run verify:hardening"
+    "verify:backup": "tsx scripts/verify-backup.ts",
+    "backup": "tsx scripts/backup-db.ts",
+    "restore": "tsx scripts/restore-db.ts",
+    "test": "npm run typecheck && npm run check:sql && npm run verify:counts && npm run verify:hardening && npm run verify:backup"
   },
   "keywords": [
     "mcp",

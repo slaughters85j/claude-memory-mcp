@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Daily application-consistent backup of the claude-memory LanceDB store.
+
+  launchd does not inherit an interactive PATH, so every path here is absolute:
+  the Homebrew node, the tsx CLI entry point, and scripts/backup-db.ts.
+
+  Install (run once, as the human — this repo does not load it):
+    cp "launchd/com.ubiquitousanalytics.claude-memory-backup.plist" ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ubiquitousanalytics.claude-memory-backup.plist
+  Remove:
+    launchctl bootout gui/$(id -u)/com.ubiquitousanalytics.claude-memory-backup
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ubiquitousanalytics.claude-memory-backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>/Users/system-backup/Library/Mobile Documents/com~apple~CloudDocs/Claude.AI Persistent Memory/claude-memory-mcp/node_modules/tsx/dist/cli.mjs</string>
+        <string>/Users/system-backup/Library/Mobile Documents/com~apple~CloudDocs/Claude.AI Persistent Memory/claude-memory-mcp/scripts/backup-db.ts</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/system-backup/Library/Mobile Documents/com~apple~CloudDocs/Claude.AI Persistent Memory/claude-memory-mcp</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/system-backup/Library/Logs/claude-memory-backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/system-backup/Library/Logs/claude-memory-backup.log</string>
+</dict>
+</plist>

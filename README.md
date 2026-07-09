@@ -414,6 +414,24 @@ and retains a 7-day rollback window. See
 [scripts/COMPACTION.md](scripts/COMPACTION.md) for the full procedure and
 restore steps.
 
+## Backups
+
+Compaction keeps only a short rollback window; real backups are separate.
+`scripts/backup-db.ts` takes an application-consistent, verified tarball of the
+store while the servers keep running:
+
+```bash
+npm run backup                 # back up the live store to ~/Backups/claude-memory
+npm run backup -- --dry-run    # every check, writes nothing
+npm run restore -- --from <tarball> --to <dir>
+```
+
+Retention is 30 days (never fewer than 7 backups), each tarball has a sha256'd
+manifest, and a daily 03:15 run is available as a launchd agent. iCloud is
+replication, not backup, so the destination is guarded against resolving into
+iCloud Drive. See [scripts/BACKUP.md](scripts/BACKUP.md) for the hot-copy
+correctness argument, retention, restore, and scheduling.
+
 ## Token Budget
 
 Estimated response sizes:

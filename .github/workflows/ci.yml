@@ -19,4 +19,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
+      - run: npm run check:sql
       - run: npm run verify:counts
+      - run: npm run verify:hardening
+      - run: npm run verify:backup

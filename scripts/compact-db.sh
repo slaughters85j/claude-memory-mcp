@@ -73,6 +73,24 @@ confirm() {
   [[ "$ans" == "y" || "$ans" == "Y" ]]
 }
 
+### Interlock shared with scripts/backup-db.ts, so a hot backup never copies a
+### manifest whose fragments this compaction is deleting. Both take this lock;
+### mkdir is atomic. A lock older than an hour is treated as stale and stolen.
+LOCK_DIR="$HOME/.claude-memory-maintenance.lock"
+acquire_lock() {
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    if [[ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +60 2>/dev/null)" ]]; then
+      echo "Stealing stale maintenance lock ($LOCK_DIR)."
+      rm -rf "$LOCK_DIR"; mkdir "$LOCK_DIR"
+    else
+      echo "Maintenance lock held at $LOCK_DIR — a backup or compaction is running. Remove it if stale." >&2
+      exit 1
+    fi
+  fi
+  echo "compact-db pid $$" > "$LOCK_DIR/owner"
+  trap 'rm -rf "$LOCK_DIR"' EXIT
+}
+
 # Resolve to an absolute path so the live-store comparison is reliable.
 DB_ABS="$(cd "$DB_PATH" && pwd -P)"
 LIVE_ABS="$(cd "$LIVE_STORE" 2>/dev/null && pwd -P || echo "$LIVE_STORE")"
@@ -95,6 +113,9 @@ if command -v pgrep >/dev/null 2>&1 && pgrep -fl "dist/index.js.*memory-db" >/de
   echo "WARNING: a claude-memory-mcp process is running; compacting a live store risks write conflicts."
   [[ "$DRY_RUN" == 1 ]] || confirm "Continue with writers live?" || { echo "Aborted."; exit 1; }
 fi
+
+### Take the maintenance lock before mutating anything.
+[[ "$DRY_RUN" == 1 ]] || acquire_lock
 
 ### Snapshot before any mutation.
 if [[ "$DRY_RUN" != 1 ]]; then
