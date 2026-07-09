@@ -35,7 +35,7 @@ server from inside itself.
 ## What it does
 
 - Backs up to `~/Backups/claude-memory/precompact-<UTC-timestamp>.tar.gz` first.
-- Runs `optimize()` on each table, then `cleanup_old_versions(older_than=7 days)`.
+- Runs `compact_files()` on each table, then `cleanup_old_versions(older_than=7 days)`.
 - Reads each table back to prove it still opens under the pinned 0.15 reader.
 
 Expected result: `topics` collapses from ~1,600 versions to a handful, and the

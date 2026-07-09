@@ -2,8 +2,8 @@
 #
 # Compact and clean LanceDB tables for claude-memory.
 #
-# optimize() rewrites fragments and cleanup_old_versions() prunes the version
-# history that time-travel / checkout() would use to recover. Both are
+# compact_files() rewrites fragments and cleanup_old_versions() prunes the
+# version history that time-travel / checkout() would use to recover. Both are
 # destructive and irreversible, so this script:
 #   - refuses to touch the live store without an explicit --force/confirmation,
 #   - snapshots the database to a tarball BEFORE mutating anything,
@@ -136,7 +136,7 @@ for name in tables:
         print(f"  [dry-run] rows={rows} versions={before}; would optimize + retain last {retain_days}d")
         continue
 
-    table.optimize()
+    table.compact_files()
     print("  compacted fragments")
 
     table.cleanup_old_versions(older_than=timedelta(days=retain_days))
