@@ -428,6 +428,34 @@ async function runChecks(): Promise<void> {
     assert.ok(nearAll.every((m) => m.topic_id === TOPIC_A_ID));
     assert.ok(nearAll.every((m) => !m.tags.includes("_system")));
   });
+
+  console.log("\ndedup headroom (transient delete+add duplicates)");
+  const DUP_TAG = "duptest";
+  const dupId = generateId();
+  const makeDupTopic = (id: string): Topic => ({
+    id,
+    name: `dup-${id.slice(0, 8)}`,
+    description: "duplicate fixture",
+    tags: [DUP_TAG],
+    status: "active",
+    importance: 0.5,
+    created_at: daysAgo(1),
+    updated_at: daysAgo(1),
+    last_referenced_at: daysAgo(1),
+  });
+  // A duplicate-id pair (the delete+add artifact) plus two distinct rows, all
+  // tagged DUP_TAG: four physical rows, three distinct ids.
+  await topicsTable!.add([
+    makeDupTopic(dupId),
+    makeDupTopic(dupId),
+    makeDupTopic(generateId()),
+    makeDupTopic(generateId()),
+  ] as unknown as Record<string, unknown>[]);
+  const dupPage = await listTopics({ tag_filter: [DUP_TAG], limit: 2 });
+  check("returns a full page of distinct rows despite a duplicate-id pair", () => {
+    assert.equal(dupPage.length, 2);
+    assert.equal(new Set(dupPage.map((t) => t.id)).size, 2);
+  });
 }
 
 // ============================================================================

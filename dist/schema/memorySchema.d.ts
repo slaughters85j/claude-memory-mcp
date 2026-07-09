@@ -129,11 +129,19 @@ export declare function inListSQL(column: string, values: readonly string[]): st
  */
 export declare function requireAllTagsSQL(tags: readonly string[]): string;
 /**
- * Drop rows whose id was already seen. The delete+add update pattern can
- * transiently surface an old and a new copy of the same row; this collapses
- * them. It is the only post-fetch reducer left on the list queries now that
- * all predicates are pushed into SQL, so it can no longer cause the wholesale
- * under-return the old "fetch limit*2, then filter" pattern did.
+ * Rows to fetch above a caller's `limit` before de-duplicating. Filtering now
+ * happens entirely in SQL, so the only post-fetch reducer is dedupById; this
+ * small headroom lets it drop transient delete+add duplicate rows without
+ * shrinking the page below `limit`. Far tighter than the old limit*2
+ * over-fetch, which existed to survive client-side filtering rejecting >50% of
+ * the page.
+ */
+export declare const DEDUP_HEADROOM = 8;
+/**
+ * Drop rows whose id was already seen, preserving order. The delete+add update
+ * pattern can transiently surface an old and a new copy of the same row; this
+ * collapses them. Callers fetch DEDUP_HEADROOM extra rows and slice back to
+ * `limit`, so this shrinkage does not under-fill the page.
  */
 export declare function dedupById<T extends {
     id: string;
