@@ -7,7 +7,7 @@
  * 3. Null provider if DISABLE_EMBEDDINGS=true
  */
 import { EmbeddingProvider } from "./provider.js";
-export { EmbeddingProvider } from "./provider.js";
+export type { EmbeddingProvider } from "./provider.js";
 export { OnnxEmbeddingProvider } from "./onnxProvider.js";
 export { OpenAIEmbeddingProvider } from "./openaiProvider.js";
 export { NullEmbeddingProvider } from "./nullProvider.js";

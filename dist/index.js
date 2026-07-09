@@ -4,7 +4,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import { connectToLanceDB, closeLanceDB, client } from "./lancedb/client.js";
 import { ToolRegistry } from "./tools/registry.js";
-import { initializeMemoryTables } from "./schema/memorySchema.js";
+import { initializeMemoryTables, refreshTables } from "./schema/memorySchema.js";
+import { runExclusive } from "./concurrency.js";
 import { getVectorDimensions } from "./embeddings/index.js";
 import * as defaults from './config.js';
 const args = process.argv.slice(2);
@@ -40,7 +41,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!tool) {
             throw new Error(`Unknown tool: ${name}`);
         }
-        const result = await tool.execute(args);
+        // The handler boundary. runExclusive serializes handlers within this process
+        // so refreshTables() never fires inside another handler's scan; refreshTables()
+        // then pins every table handle to the latest committed version for the whole
+        // handler, so this process sees rows written by the other server processes.
+        const result = await runExclusive(async () => {
+            await refreshTables();
+            return tool.execute(args);
+        });
         return result;
     }
     catch (error) {

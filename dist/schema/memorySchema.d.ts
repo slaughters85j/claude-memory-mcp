@@ -80,6 +80,27 @@ export declare const TODOS_TABLE_NAME = "todos";
 export declare let topicsTable: lancedb.Table | null;
 export declare let memoriesTable: lancedb.Table | null;
 export declare let todosTable: lancedb.Table | null;
+/**
+ * Advance every module-level table handle to the latest committed version.
+ *
+ * A LanceDB `Table` handle pins the manifest version it was opened at. A read
+ * never advances it; only a write performed by *that same handle* does (verified
+ * empirically against @lancedb/lancedb 0.15 — see scripts/verify-staleness.ts).
+ * Claude Desktop runs several claude-memory-mcp processes from one config entry,
+ * so each process's handle otherwise serves reads from the version of its own
+ * last write and never sees another process's committed rows.
+ *
+ * `checkoutLatest()` re-reads the newest manifest in place (~0.12ms on the live
+ * topics table at 111 manifests, well under 1ms — measured), so after this call
+ * the handle sees every other process's commits. Call it exactly once at the top
+ * of each MCP tool handler, under the handler mutex (see src/concurrency.ts), so
+ * the pinned version holds for the whole handler and no concurrent handler
+ * advances it mid-scan — which is what makes scanAll's count-then-read atomic.
+ *
+ * Tolerates an uninitialized handle by throwing the same "not initialized" error
+ * the CRUD helpers throw.
+ */
+export declare function refreshTables(): Promise<void>;
 export declare function generateId(): string;
 export declare function nowISO(): string;
 /**
@@ -159,6 +180,29 @@ export declare function requireAllTagsSQL(tags: readonly string[]): string;
  * the dedupe cleanup, which re-adds rows it read via toArray().
  */
 export declare function toPlainRow(row: Record<string, unknown>): Record<string, unknown>;
+/** LanceDB surfaces a lost commit race as an unresolved "Commit conflict" error. */
+export declare function isCommitConflict(error: unknown): boolean;
+/**
+ * Run an atomic write, retrying on LanceDB commit conflicts. LanceDB uses
+ * optimistic concurrency and does not auto-resolve conflicting commits — the
+ * loser must rerun against the latest version.
+ *
+ * The retry is only real because it refreshes the table handle first. A commit
+ * conflict means another process committed since this handle's pinned version;
+ * that write never advances *this* handle (only its own writes do). Without the
+ * refresh, `op` would re-read the same stale version and re-build a commit
+ * against it, hitting the identical conflict every attempt until the loop gives
+ * up — a delay loop, not a retry (proven in scripts/verify-staleness.ts). The
+ * refresh (`checkoutLatest` on every handle) advances the handle so `op`'s
+ * re-read sees the winning write and its new commit targets the latest version.
+ * That is what actually merges the two writes and closes the read-modify-write
+ * lost-update window — `op` must re-read current state each attempt for it to
+ * hold, which the update helpers do (getXById then updateColumns).
+ *
+ * `refresh` is injectable so a test can drive a single stale handle; production
+ * callers use the default (refreshTables, refreshing all three module handles).
+ */
+export declare function withCommitRetry<T>(op: () => Promise<T>, refresh?: () => Promise<void>): Promise<T>;
 export declare const PRIORITY_ORDER: Record<TodoPriority, number>;
 /** Strip the vector field from a single Todo */
 export declare function stripTodoVector(todo: Todo): Omit<Todo, 'vector'>;
@@ -182,6 +226,20 @@ export declare function listTopics(filters: {
 }): Promise<Topic[]>;
 export declare function deleteTopic(id: string): Promise<boolean>;
 export declare function touchTopicLastReferenced(id: string): Promise<void>;
+/**
+ * Touch a topic's last_referenced_at, swallowing any failure.
+ *
+ * `last_referenced_at` is derived metadata, not user data. Tool handlers call
+ * this *after* the user's memory/todo write has already committed durably, or as
+ * a read-side effect. A throw here must never fail the handler and make the
+ * caller believe a durable write was lost — that false failure is exactly what
+ * drove retried add_memory calls into duplicate rows (see
+ * scripts/audit-duplicates.ts). Swallowing it cannot mask a *user-data* write
+ * failure: the memory/todo/topic writes propagate their own errors, and a
+ * genuinely broken topics table still fails loudly on create_topic/update_topic,
+ * which do not route through here — only this timestamp touch is suppressed.
+ */
+export declare function safeTouchTopicLastReferenced(id: string): Promise<void>;
 export declare function createMemory(data: Omit<Memory, "id" | "created_at" | "updated_at">): Promise<Memory>;
 export declare function updateMemory(id: string, updates: Partial<Omit<Memory, "id" | "created_at">>): Promise<Memory | null>;
 export declare function getMemoryById(id: string): Promise<Memory | null>;

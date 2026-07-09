@@ -23,3 +23,4 @@ jobs:
       - run: npm run verify:counts
       - run: npm run verify:hardening
       - run: npm run verify:backup
+      - run: npm run verify:staleness

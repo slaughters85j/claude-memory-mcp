@@ -17,7 +17,7 @@ import {
   getTopicById,
   getTopicByName,
   createTopic,
-  touchTopicLastReferenced,
+  safeTouchTopicLastReferenced,
   Memory,
   MemoryKind,
   MemorySearchResult,
@@ -139,7 +139,7 @@ export class AddMemoryTool extends BaseTool<AddMemoryParams> {
 
       // Touch the topic's last_referenced_at
       if (topicId) {
-        await touchTopicLastReferenced(topicId);
+        await safeTouchTopicLastReferenced(topicId);
       }
 
       // Strip vector from output (too large, not useful for Claude)
@@ -267,7 +267,7 @@ export class UpdateMemoryTool extends BaseTool<UpdateMemoryParams> {
 
       // Touch the topic's last_referenced_at
       if (memory.topic_id) {
-        await touchTopicLastReferenced(memory.topic_id);
+        await safeTouchTopicLastReferenced(memory.topic_id);
       }
 
       // Strip vector from output (too large, not useful for Claude)
@@ -408,7 +408,7 @@ export class SearchMemoriesTool extends BaseTool<SearchMemoriesParams> {
 
               // Touch topic last_referenced_at
               if (m.topic_id) {
-                await touchTopicLastReferenced(m.topic_id);
+                await safeTouchTopicLastReferenced(m.topic_id);
               }
 
               return result;
@@ -572,7 +572,7 @@ export class GetMemoryTool extends BaseTool<GetMemoryParams> {
 
       // Touch topic last_referenced_at
       if (memory.topic_id) {
-        await touchTopicLastReferenced(memory.topic_id);
+        await safeTouchTopicLastReferenced(memory.topic_id);
       }
 
       return {
@@ -666,7 +666,7 @@ export class GetMemoryTimelineTool extends BaseTool<GetMemoryTimelineParams> {
       );
 
       // Touch topic last_referenced_at
-      await touchTopicLastReferenced(params.topic_id);
+      await safeTouchTopicLastReferenced(params.topic_id);
 
       return {
         content: [

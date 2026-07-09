@@ -5,7 +5,7 @@
  * Supports semantic search when embeddings are available, falls back to text search.
  */
 import { BaseTool } from "../base/tool.js";
-import { createMemory, updateMemory, getMemoryById, listMemories, deleteMemory, searchMemoriesVector, getMemoriesBySupersedes, getTopicById, getTopicByName, createTopic, touchTopicLastReferenced, stripTodoVectors, stripMemoryVectors, } from "../../schema/memorySchema.js";
+import { createMemory, updateMemory, getMemoryById, listMemories, deleteMemory, searchMemoriesVector, getMemoriesBySupersedes, getTopicById, getTopicByName, createTopic, safeTouchTopicLastReferenced, stripTodoVectors, stripMemoryVectors, } from "../../schema/memorySchema.js";
 import { safeEmbed, getEmbeddingProvider } from "../../embeddings/index.js";
 export class AddMemoryTool extends BaseTool {
     constructor() {
@@ -101,7 +101,7 @@ export class AddMemoryTool extends BaseTool {
             });
             // Touch the topic's last_referenced_at
             if (topicId) {
-                await touchTopicLastReferenced(topicId);
+                await safeTouchTopicLastReferenced(topicId);
             }
             // Strip vector from output (too large, not useful for Claude)
             const { vector: _v, ...memoryWithoutVector } = memory;
@@ -214,7 +214,7 @@ export class UpdateMemoryTool extends BaseTool {
             }
             // Touch the topic's last_referenced_at
             if (memory.topic_id) {
-                await touchTopicLastReferenced(memory.topic_id);
+                await safeTouchTopicLastReferenced(memory.topic_id);
             }
             // Strip vector from output (too large, not useful for Claude)
             const { vector: _v, ...memoryWithoutVector } = memory;
@@ -326,7 +326,7 @@ export class SearchMemoriesTool extends BaseTool {
                         }
                         // Touch topic last_referenced_at
                         if (m.topic_id) {
-                            await touchTopicLastReferenced(m.topic_id);
+                            await safeTouchTopicLastReferenced(m.topic_id);
                         }
                         return result;
                     }));
@@ -458,7 +458,7 @@ export class GetMemoryTool extends BaseTool {
             }
             // Touch topic last_referenced_at
             if (memory.topic_id) {
-                await touchTopicLastReferenced(memory.topic_id);
+                await safeTouchTopicLastReferenced(memory.topic_id);
             }
             return {
                 content: [
@@ -533,7 +533,7 @@ export class GetMemoryTimelineTool extends BaseTool {
             const includeContent = params.include_content ?? true;
             const cleanMemories = stripMemoryVectors(memories).map((m) => includeContent ? m : { ...m, content: undefined });
             // Touch topic last_referenced_at
-            await touchTopicLastReferenced(params.topic_id);
+            await safeTouchTopicLastReferenced(params.topic_id);
             return {
                 content: [
                     {

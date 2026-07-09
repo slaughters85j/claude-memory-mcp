@@ -11,6 +11,37 @@ export const TODOS_TABLE_NAME = "todos";
 export let topicsTable = null;
 export let memoriesTable = null;
 export let todosTable = null;
+/**
+ * Advance every module-level table handle to the latest committed version.
+ *
+ * A LanceDB `Table` handle pins the manifest version it was opened at. A read
+ * never advances it; only a write performed by *that same handle* does (verified
+ * empirically against @lancedb/lancedb 0.15 — see scripts/verify-staleness.ts).
+ * Claude Desktop runs several claude-memory-mcp processes from one config entry,
+ * so each process's handle otherwise serves reads from the version of its own
+ * last write and never sees another process's committed rows.
+ *
+ * `checkoutLatest()` re-reads the newest manifest in place (~0.12ms on the live
+ * topics table at 111 manifests, well under 1ms — measured), so after this call
+ * the handle sees every other process's commits. Call it exactly once at the top
+ * of each MCP tool handler, under the handler mutex (see src/concurrency.ts), so
+ * the pinned version holds for the whole handler and no concurrent handler
+ * advances it mid-scan — which is what makes scanAll's count-then-read atomic.
+ *
+ * Tolerates an uninitialized handle by throwing the same "not initialized" error
+ * the CRUD helpers throw.
+ */
+export async function refreshTables() {
+    if (!topicsTable)
+        throw new Error("Topics table not initialized");
+    if (!memoriesTable)
+        throw new Error("Memories table not initialized");
+    if (!todosTable)
+        throw new Error("Todos table not initialized");
+    await topicsTable.checkoutLatest();
+    await memoriesTable.checkoutLatest();
+    await todosTable.checkoutLatest();
+}
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -139,17 +170,30 @@ async function updateColumns(table, id, values) {
 /** Times an atomic write is retried when it loses a commit race. */
 const COMMIT_RETRY_ATTEMPTS = 12;
 /** LanceDB surfaces a lost commit race as an unresolved "Commit conflict" error. */
-function isCommitConflict(error) {
+export function isCommitConflict(error) {
     return error instanceof Error && /commit conflict/i.test(error.message);
 }
 /**
  * Run an atomic write, retrying on LanceDB commit conflicts. LanceDB uses
  * optimistic concurrency and does not auto-resolve conflicting commits — the
- * loser must rerun against the latest version. `op` should re-read current state
- * each attempt, so a retry merges with the winning write instead of clobbering
- * it (this is also what closes the read-modify-write lost-update window).
+ * loser must rerun against the latest version.
+ *
+ * The retry is only real because it refreshes the table handle first. A commit
+ * conflict means another process committed since this handle's pinned version;
+ * that write never advances *this* handle (only its own writes do). Without the
+ * refresh, `op` would re-read the same stale version and re-build a commit
+ * against it, hitting the identical conflict every attempt until the loop gives
+ * up — a delay loop, not a retry (proven in scripts/verify-staleness.ts). The
+ * refresh (`checkoutLatest` on every handle) advances the handle so `op`'s
+ * re-read sees the winning write and its new commit targets the latest version.
+ * That is what actually merges the two writes and closes the read-modify-write
+ * lost-update window — `op` must re-read current state each attempt for it to
+ * hold, which the update helpers do (getXById then updateColumns).
+ *
+ * `refresh` is injectable so a test can drive a single stale handle; production
+ * callers use the default (refreshTables, refreshing all three module handles).
  */
-async function withCommitRetry(op) {
+export async function withCommitRetry(op, refresh = refreshTables) {
     for (let attempt = 0;; attempt += 1) {
         try {
             return await op();
@@ -157,7 +201,9 @@ async function withCommitRetry(op) {
         catch (error) {
             if (!isCommitConflict(error) || attempt >= COMMIT_RETRY_ATTEMPTS - 1)
                 throw error;
-            // Jittered backoff so concurrent writers don't retry in lockstep.
+            // Advance to the latest committed version so the retry re-reads current
+            // state, then jittered backoff so concurrent writers don't retry in lockstep.
+            await refresh();
             const delayMs = (attempt + 1) * 8 + Math.random() * 12;
             await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
@@ -369,6 +415,29 @@ export async function touchTopicLastReferenced(id) {
         where: `id = ${sqlString(id)}`,
         values: { last_referenced_at: nowISO() },
     }));
+}
+/**
+ * Touch a topic's last_referenced_at, swallowing any failure.
+ *
+ * `last_referenced_at` is derived metadata, not user data. Tool handlers call
+ * this *after* the user's memory/todo write has already committed durably, or as
+ * a read-side effect. A throw here must never fail the handler and make the
+ * caller believe a durable write was lost — that false failure is exactly what
+ * drove retried add_memory calls into duplicate rows (see
+ * scripts/audit-duplicates.ts). Swallowing it cannot mask a *user-data* write
+ * failure: the memory/todo/topic writes propagate their own errors, and a
+ * genuinely broken topics table still fails loudly on create_topic/update_topic,
+ * which do not route through here — only this timestamp touch is suppressed.
+ */
+export async function safeTouchTopicLastReferenced(id) {
+    try {
+        await touchTopicLastReferenced(id);
+    }
+    catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(`warning: could not touch last_referenced_at for topic ${id} ` +
+            `(the memory/read succeeded and is unaffected): ${detail}`);
+    }
 }
 // ============================================================================
 // CRUD Operations for Memories

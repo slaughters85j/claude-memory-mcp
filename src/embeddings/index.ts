@@ -12,7 +12,7 @@ import { OnnxEmbeddingProvider } from "./onnxProvider.js";
 import { OpenAIEmbeddingProvider } from "./openaiProvider.js";
 import { NullEmbeddingProvider } from "./nullProvider.js";
 
-export { EmbeddingProvider } from "./provider.js";
+export type { EmbeddingProvider } from "./provider.js";
 export { OnnxEmbeddingProvider } from "./onnxProvider.js";
 export { OpenAIEmbeddingProvider } from "./openaiProvider.js";
 export { NullEmbeddingProvider } from "./nullProvider.js";
