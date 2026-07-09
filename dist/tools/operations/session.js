@@ -6,6 +6,14 @@
  */
 import { BaseTool } from "../base/tool.js";
 import { getOverdueTodos, getHighPriorityTodos, getTodoCountsByPriority, getRecentlyUpdatedTopics, getStaleTopics, getMemoryCountSince, stripTodoVectors, } from "../../schema/memorySchema.js";
+/**
+ * Cap on how many topics get_session_context lists in each of its recent and
+ * stale sections. This is a quick status check, not an exhaustive dump; the
+ * schema helpers now return every matching row (they used to accidentally stop
+ * at ten), so without a cap here a large store would balloon the very response
+ * this endpoint exists to keep small.
+ */
+const MAX_SESSION_TOPICS = 10;
 export class GetSessionContextTool extends BaseTool {
     constructor() {
         super(...arguments);
@@ -60,11 +68,13 @@ export class GetSessionContextTool extends BaseTool {
             if (includeHighPriority) {
                 todoSummary.high_priority = stripTodoVectors(await getHighPriorityTodos());
             }
-            // Get recent activity
+            // Get recent activity. getRecentlyUpdatedTopics returns rows already
+            // sorted by last_referenced_at desc, so the cap keeps the most recent.
             let recentTopics = await getRecentlyUpdatedTopics(recentDays);
             if (activeTopicsOnly) {
                 recentTopics = recentTopics.filter((t) => t.status === "active");
             }
+            recentTopics = recentTopics.slice(0, MAX_SESSION_TOPICS);
             const memoryCounts = await getMemoryCountSince(recentDays);
             const recentActivity = {
                 topics_updated: recentTopics.map((t) => ({
@@ -77,9 +87,13 @@ export class GetSessionContextTool extends BaseTool {
                 memories_added: memoryCounts.added,
                 memories_updated: memoryCounts.updated,
             };
-            // Get stale topics (active but no activity in 30+ days)
+            // Get stale topics (active but no activity in 30+ days). getStaleTopics
+            // returns them unordered, so sort most-stale-first before capping.
             const staleTopics = await getStaleTopics(30);
-            const staleTopicSummaries = staleTopics.map((t) => ({
+            const staleTopicSummaries = staleTopics
+                .sort((a, b) => a.last_referenced_at.localeCompare(b.last_referenced_at))
+                .slice(0, MAX_SESSION_TOPICS)
+                .map((t) => ({
                 id: t.id,
                 name: t.name,
                 status: t.status,

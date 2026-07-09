@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # `npm ci` runs the `prepare` script (tsc build); the explicit steps below
+      # keep each check visible as its own line in the CI log.
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run verify:counts
