@@ -111,8 +111,12 @@ export declare const EXCLUDE_SYSTEM_ROWS = "array_has(tags, '_system') IS NOT TR
  * never called, so `table.query().where(f).toArray()` silently yields only the
  * first ten matches. Counting the matches first and then requesting exactly
  * that many rows keeps the scan bounded without inventing an arbitrary maximum.
+ *
+ * Pass `columns` to project only the fields you need — e.g. to avoid
+ * materializing the 384-float `vector` column when scanning todos or memories.
+ * When projecting, `T` should describe just the selected columns.
  */
-export declare function scanAll<T>(table: lancedb.Table, filter: string): Promise<T[]>;
+export declare function scanAll<T>(table: lancedb.Table, filter: string, columns?: string[]): Promise<T[]>;
 /**
  * `column IN ('a', 'b', ...)` with every value escaped. Used for status,
  * priority, kind and topic-id membership tests pushed into SQL.

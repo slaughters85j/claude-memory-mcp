@@ -159,11 +159,21 @@ export const EXCLUDE_SYSTEM_ROWS = "array_has(tags, '_system') IS NOT TRUE";
  * never called, so `table.query().where(f).toArray()` silently yields only the
  * first ten matches. Counting the matches first and then requesting exactly
  * that many rows keeps the scan bounded without inventing an arbitrary maximum.
+ *
+ * Pass `columns` to project only the fields you need — e.g. to avoid
+ * materializing the 384-float `vector` column when scanning todos or memories.
+ * When projecting, `T` should describe just the selected columns.
  */
-export async function scanAll<T>(table: lancedb.Table, filter: string): Promise<T[]> {
+export async function scanAll<T>(
+  table: lancedb.Table,
+  filter: string,
+  columns?: string[],
+): Promise<T[]> {
   const matches = await table.countRows(filter);
   if (matches === 0) return [];
-  const rows = await table.query().where(filter).limit(matches).toArray();
+  let query = table.query().where(filter);
+  if (columns) query = query.select(columns);
+  const rows = await query.limit(matches).toArray();
   return rows as unknown as T[];
 }
 
@@ -743,24 +753,24 @@ export async function countOpenTodosByTopic(topicId: string): Promise<number> {
 export async function getTodoCountsByPriority(): Promise<Record<TodoPriority, number>> {
   if (!todosTable) throw new Error("Todos table not initialized");
 
-  const table = todosTable;
-  const priorities: TodoPriority[] = ["urgent", "high", "medium", "low"];
+  const counts: Record<TodoPriority, number> = { urgent: 0, high: 0, medium: 0, low: 0 };
 
-  const entries = await Promise.all(
-    priorities.map(
-      async (priority) =>
-        [
-          priority,
-          await table.countRows(
-            `status IN ('open', 'in_progress', 'blocked') ` +
-              `AND priority = ${sqlString(priority)} ` +
-              `AND ${EXCLUDE_SYSTEM_ROWS}`,
-          ),
-        ] as const,
-    ),
+  // One scan over just the priority column, rather than one countRows per
+  // priority. A single snapshot means the four buckets always sum to a real
+  // total, and projecting to `priority` never materializes the 384-float
+  // vector. scanAll counts first, so LanceDB's default page size of 10 cannot
+  // truncate the result.
+  const rows = await scanAll<{ priority: TodoPriority }>(
+    todosTable,
+    `status IN ('open', 'in_progress', 'blocked') AND ${EXCLUDE_SYSTEM_ROWS}`,
+    ["priority"],
   );
 
-  return Object.fromEntries(entries) as Record<TodoPriority, number>;
+  for (const { priority } of rows) {
+    counts[priority]++;
+  }
+
+  return counts;
 }
 
 export async function getOverdueTodos(): Promise<Todo[]> {
