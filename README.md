@@ -382,9 +382,37 @@ npm run build
 # Watch mode
 npm run watch
 
-# Test with MCP Inspector
+# Type-check sources and scripts (no emit)
+npm run typecheck
+
+# Run the count/list regression checks against a throwaway store
+npm test            # == npm run typecheck && npm run verify:counts
+
+# Interactive testing with MCP Inspector
 npx @modelcontextprotocol/inspector dist/index.js /path/to/test-db
 ```
+
+`scripts/verify-counts.ts` builds a temporary LanceDB, seeds fixtures above
+LanceDB's default 10-row query limit, and asserts the aggregate/list functions
+return exact results. GitHub Actions runs `build`, `typecheck`, and
+`verify:counts` on every push and pull request (`.github/workflows/ci.yml`).
+
+## Database Maintenance
+
+LanceDB writes a new version on every change, so the store fragments over time
+(each `last_referenced_at` touch rewrites a topic row). To compact fragments and
+prune old versions:
+
+```bash
+scripts/compact-db.sh --dry-run   # preview row/version counts, no changes
+scripts/compact-db.sh             # optimize + prune (takes a backup first)
+```
+
+Quit Claude Desktop first so no memory server is writing the store. The script
+snapshots the database to `~/Backups/claude-memory/` before mutating anything
+and retains a 7-day rollback window. See
+[scripts/COMPACTION.md](scripts/COMPACTION.md) for the full procedure and
+restore steps.
 
 ## Token Budget
 
